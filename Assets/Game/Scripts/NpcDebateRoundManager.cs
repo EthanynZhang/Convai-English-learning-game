@@ -33,6 +33,7 @@ namespace Game.Debate
         [SerializeField] private AudioSource refereeAudioSource;
         [SerializeField] private AudioClip refereeOpeningClip;
         [SerializeField] private AudioClip refereeClosingClip;
+        [SerializeField] private RefereePresentationController refereePresentation;
 
         [Header("Start Control")]
         [SerializeField] private Button startButton;
@@ -174,6 +175,12 @@ namespace Game.Debate
 
         private void PlayRefereeClip(AudioClip clip)
         {
+            if (refereePresentation != null)
+            {
+                refereePresentation.PlayClip(clip);
+                return;
+            }
+
             if (refereeAudioSource == null || clip == null)
             {
                 return;

@@ -108,3 +108,9 @@ InitTestScene*.unity*
 .funplay/
 Build1/
 Build1.rar
+
+# Local exported builds and safety backups
+/exe/
+/0617exe/
+/web/
+/_Backups/

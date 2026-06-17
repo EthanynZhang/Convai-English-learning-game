@@ -132,6 +132,33 @@ namespace Game.Debate
                 "Output only the bad example.");
         }
 
+        public void UseLogosAppeal()
+        {
+            RequestVariant(
+                "Rewrite the response below using Logos, a logical appeal. " +
+                "Prioritize clear reasons, evidence, cause-and-effect relationships, tradeoffs, and practical solutions. " +
+                "Keep the tone rational, specific, and well structured. Avoid vague emotional claims. " +
+                "Output only the revised response.");
+        }
+
+        public void UseEthosAppeal()
+        {
+            RequestVariant(
+                "Rewrite the response below using Ethos, a credibility and ethical appeal. " +
+                "Emphasize fairness, responsibility, honesty, professional credibility, and a balanced position. " +
+                "Acknowledge reasonable concerns from different stakeholders. Keep the tone principled, trustworthy, and steady. " +
+                "Output only the revised response.");
+        }
+
+        public void UsePathosAppeal()
+        {
+            RequestVariant(
+                "Rewrite the response below using Pathos, an emotional appeal. " +
+                "Emphasize empathy, real pressure, a sense of fairness, and concern about future consequences. " +
+                "Make the response more humane and emotionally resonant, but do not exaggerate or manipulate emotions. " +
+                "Output only the revised response.");
+        }
+
         public void ContinueDebate()
         {
             if (!CanUsePendingResponse() || conversationManager == null)

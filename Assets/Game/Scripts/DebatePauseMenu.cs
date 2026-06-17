@@ -14,6 +14,7 @@ namespace Game.Debate
         private const string PlayerVsNpcScene = "Level_PlayerVsNPCDebate";
         private const string NpcVsNpcScene = "Level_NPCVsNPCDebate";
         private const string InteractiveNpcScene = "Level_InteractiveNPCDebate";
+        private const string SharedInitiativeScene = "Level_SharedInitiativeOrchestration";
 
         private Canvas _canvas;
         private GameObject _menuRoot;
@@ -152,7 +153,7 @@ namespace Game.Debate
             panelRect.anchorMin = new Vector2(0.5f, 0.5f);
             panelRect.anchorMax = new Vector2(0.5f, 0.5f);
             panelRect.pivot = new Vector2(0.5f, 0.5f);
-            panelRect.sizeDelta = new Vector2(520f, 500f);
+            panelRect.sizeDelta = new Vector2(520f, 580f);
             panelRect.anchoredPosition = Vector2.zero;
 
             var panelImage = panel.AddComponent<Image>();
@@ -170,6 +171,7 @@ namespace Game.Debate
             CreateButton(panel.transform, "Player vs NPC Debate", () => LoadLevel(PlayerVsNpcScene), new Color(0.10f, 0.42f, 0.67f));
             CreateButton(panel.transform, "NPC vs NPC Debate", () => LoadLevel(NpcVsNpcScene), new Color(0.14f, 0.50f, 0.42f));
             CreateButton(panel.transform, "Interactive NPC Debate", () => LoadLevel(InteractiveNpcScene), new Color(0.33f, 0.45f, 0.70f));
+            CreateButton(panel.transform, "Condition C: Shared Initiative", () => LoadLevel(SharedInitiativeScene), new Color(0.52f, 0.35f, 0.68f));
             CreateButton(panel.transform, "Restart Current Level", RestartCurrentLevel, new Color(0.70f, 0.48f, 0.13f));
             CreateButton(panel.transform, "Quit Game", QuitGame, new Color(0.62f, 0.22f, 0.20f));
 
