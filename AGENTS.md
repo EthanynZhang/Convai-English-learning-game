@@ -27,7 +27,7 @@ This file is managed by Funplay MCP for Unity.
 
 ## Project
 
-- Project root: `F:\unity projects\convaiquick`
+- Project root: `E:\Unity Project\Convai-English-learning-game`
 - Product name: `convaiquick`
 
 ## Notes
