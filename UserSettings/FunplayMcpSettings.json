@@ -1,0 +1,18 @@
+{
+    "enabled": true,
+    "port": 8765,
+    "toolExportProfile": "core",
+    "coreToolsCustom": false,
+    "coreTools": [],
+    "fullToolsCustom": false,
+    "fullTools": [],
+    "selectedConfigTarget": "Codex",
+    "executeCodeSafetyChecksEnabled": true,
+    "executeCodeSafetyChecksConfigured": true,
+    "executeCodeStrictFilesystemSafetyEnabled": true,
+    "executeCodeStrictFilesystemSafetyConfigured": true,
+    "executeCodeProjectNamespaceInjectionEnabled": false,
+    "executeCodeProjectNamespaceInjectionConfigured": true,
+    "pluginDebugLoggingEnabled": false,
+    "pluginDebugLoggingConfigured": true
+}
