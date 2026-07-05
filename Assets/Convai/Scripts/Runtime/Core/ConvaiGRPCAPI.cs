@@ -30,6 +30,7 @@ namespace Convai.Scripts.Runtime.Core
     {
         private static bool _isInitializationErrorThrown;
         public static ConvaiGRPCAPI Instance;
+        public static Func<string, bool> TryHandleUserVoiceTranscript;
         private static bool _usageLimitNotificationSent;
         private ConvaiNPC _activeConvaiNPC;
         private string _apiKey;
@@ -37,6 +38,7 @@ namespace Convai.Scripts.Runtime.Core
         private ConvaiChatUIHandler _chatUIHandler;
         private string _currentTranscript;
         private string _isFinalUserQueryTextBuffer = "";
+        private bool _suppressCurrentVoiceResponse;
 
         private void Awake()
         {
@@ -588,10 +590,19 @@ namespace Convai.Scripts.Runtime.Core
                     OnResultReceived?.Invoke(result);
                     ProcessCharacterEmotion(result, npc);
                     ProcessUserQuery(result);
-                    ProcessBtResponse(result, npc);
-                    ProcessActionResponse(result, npc);
-                    ProcessAudioResponse(result, lipSyncBlendFrameQueue, ref firstSilFound, npc);
-                    ProcessDebugLog(result, call, npc);
+                    if (!_suppressCurrentVoiceResponse)
+                    {
+                        ProcessBtResponse(result, npc);
+                        ProcessActionResponse(result, npc);
+                        ProcessAudioResponse(result, lipSyncBlendFrameQueue, ref firstSilFound, npc);
+                        ProcessDebugLog(result, call, npc);
+                    }
+
+                    if (result.AudioResponse != null && result.AudioResponse.EndOfResponse)
+                    {
+                        _suppressCurrentVoiceResponse = false;
+                    }
+
                     UpdateSessionId(result, npc);
                 }
                 catch (RpcException rpcException) when (rpcException.StatusCode == StatusCode.Cancelled)
@@ -628,7 +639,17 @@ namespace Convai.Scripts.Runtime.Core
                 _currentTranscript = _isFinalUserQueryTextBuffer + result.UserQuery.TextData;
                 if (result.UserQuery.IsFinal) _isFinalUserQueryTextBuffer += result.UserQuery.TextData;
 
-                if (result.UserQuery.EndOfResponse) _isFinalUserQueryTextBuffer = "";
+                if (result.UserQuery.EndOfResponse)
+                {
+                    string finalTranscript = _isFinalUserQueryTextBuffer.Trim();
+                    if (!string.IsNullOrWhiteSpace(finalTranscript) &&
+                        TryHandleUserVoiceTranscript?.Invoke(finalTranscript) == true)
+                    {
+                        _suppressCurrentVoiceResponse = true;
+                    }
+
+                    _isFinalUserQueryTextBuffer = "";
+                }
             }
             else
             {

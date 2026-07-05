@@ -8,9 +8,12 @@ namespace Game.Debate
 {
     public class NpcDebateRoundManager : MonoBehaviour
     {
+        public const bool DefaultUseRoundTimer = true;
+
         [Header("Round")]
         [SerializeField] private bool startOnPlay = true;
         [SerializeField] private float roundDurationSeconds = 180f;
+        [SerializeField] private bool useRoundTimer = DefaultUseRoundTimer;
         [SerializeField] private float openingCaptionSeconds = 2.5f;
         [SerializeField] private float closingCaptionSeconds = 5f;
         [SerializeField] private bool endConversationWhenTimeExpires = true;
@@ -38,6 +41,7 @@ namespace Game.Debate
         [Header("Start Control")]
         [SerializeField] private Button startButton;
         [SerializeField] private bool unlockCursorBeforeStart = true;
+        [SerializeField] private bool waitForExternalStart;
 
         [Header("Timer")]
         [SerializeField] private TMP_Text timerText;
@@ -57,17 +61,40 @@ namespace Game.Debate
 
         public bool IsRoundRunning { get; private set; }
         public bool HasRoundEnded { get; private set; }
+        public bool WaitForExternalStart => waitForExternalStart;
+        public bool UseRoundTimer => useRoundTimer;
 
         private void Start()
         {
             HideRefereeCaption();
-            UpdateTimer(roundDurationSeconds);
+            SetTimerVisible(useRoundTimer);
+            if (useRoundTimer)
+            {
+                UpdateTimer(roundDurationSeconds);
+            }
+
+            if (waitForExternalStart)
+            {
+                SetStartButtonVisible(false);
+                SetWaitingForStartCursor(false);
+                return;
+            }
+
             SetStartButtonVisible(!startOnPlay);
             SetWaitingForStartCursor(!startOnPlay);
 
             if (startOnPlay)
             {
                 BeginRound();
+            }
+        }
+
+        public void SetWaitForExternalStart(bool wait)
+        {
+            waitForExternalStart = wait;
+            if (waitForExternalStart && !IsRoundRunning)
+            {
+                SetStartButtonVisible(false);
             }
         }
 
@@ -96,11 +123,23 @@ namespace Game.Debate
 
             ShowRefereeCaption(FormatDebateText(refereeOpeningLine));
             PlayRefereeClip(refereeOpeningClip);
-            UpdateTimer(_remainingSeconds);
+            SetTimerVisible(useRoundTimer);
+            if (useRoundTimer)
+            {
+                UpdateTimer(_remainingSeconds);
+            }
 
             yield return new WaitForSeconds(GetCaptionDelay(openingCaptionSeconds, refereeOpeningClip));
 
             StartNpcOpening();
+
+            if (!useRoundTimer)
+            {
+                while (true)
+                {
+                    yield return null;
+                }
+            }
 
             while (_remainingSeconds > 0f)
             {
@@ -243,6 +282,17 @@ namespace Game.Debate
             int minutes = totalSeconds / 60;
             int remainingSeconds = totalSeconds % 60;
             timerText.text = $"{timerPrefix}{minutes:00}:{remainingSeconds:00}";
+        }
+
+        private void SetTimerVisible(bool visible)
+        {
+            if (timerText == null)
+            {
+                return;
+            }
+
+            timerText.text = visible ? timerText.text : string.Empty;
+            timerText.gameObject.SetActive(visible);
         }
 
         private string FormatDebateText(string template)

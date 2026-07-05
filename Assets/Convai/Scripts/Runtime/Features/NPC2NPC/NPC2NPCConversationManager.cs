@@ -122,7 +122,7 @@ namespace Convai.Scripts.Runtime.Features
             {
                 ConvaiLogger.DebugLog($"Relaying message from {sender.CharacterName} to {receiver.CharacterName}: {message}", ConvaiLogger.LogCategory.Character);
 
-                string processedMessage = ProcessMessage(receiver, npcGroup.topic, message);
+                string processedMessage = ProcessMessage(sender, npcGroup.topic, message);
                 receiver.SendTextDataNPC2NPC(processedMessage);
             }
             catch (Exception e)

@@ -831,24 +831,24 @@ PlayerSettings:
   webWasm2023: 0
   webEnableSubmoduleStrippingCompatibility: 0
   scriptingDefineSymbols:
-    Android: CONVAI_URP_CONVERTER_INSTALLED
-    EmbeddedLinux: CONVAI_URP_CONVERTER_INSTALLED
-    GameCoreScarlett: CONVAI_URP_CONVERTER_INSTALLED
-    GameCoreXboxOne: CONVAI_URP_CONVERTER_INSTALLED
-    Kepler: CONVAI_URP_CONVERTER_INSTALLED
-    LinuxHeadlessSimulation: CONVAI_URP_CONVERTER_INSTALLED
-    Nintendo Switch: CONVAI_URP_CONVERTER_INSTALLED
-    Nintendo Switch 2: CONVAI_URP_CONVERTER_INSTALLED
-    PS4: CONVAI_URP_CONVERTER_INSTALLED
-    PS5: CONVAI_URP_CONVERTER_INSTALLED
-    QNX: CONVAI_URP_CONVERTER_INSTALLED
-    Standalone: CONVAI_URP_CONVERTER_INSTALLED
-    VisionOS: CONVAI_URP_CONVERTER_INSTALLED
-    WebGL: CONVAI_URP_CONVERTER_INSTALLED
-    Windows Store Apps: CONVAI_URP_CONVERTER_INSTALLED
-    XboxOne: CONVAI_URP_CONVERTER_INSTALLED
-    iPhone: CONVAI_URP_CONVERTER_INSTALLED
-    tvOS: CONVAI_URP_CONVERTER_INSTALLED
+    Android: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    EmbeddedLinux: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    GameCoreScarlett: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    GameCoreXboxOne: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    Kepler: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    LinuxHeadlessSimulation: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    Nintendo Switch: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    Nintendo Switch 2: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    PS4: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    PS5: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    QNX: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    Standalone: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    VisionOS: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    WebGL: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    Windows Store Apps: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    XboxOne: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    iPhone: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
+    tvOS: CONVAI_URP_CONVERTER_INSTALLED;CT_PROC;CT_RTV
   additionalCompilerArguments: {}
   platformArchitecture: {}
   scriptingBackend:
@@ -870,7 +870,7 @@ PlayerSettings:
   m_RenderingPath: 1
   m_MobileRenderingPath: 1
   metroPackageName: convaiquick
-  metroPackageVersion: 
+  metroPackageVersion: 1.0.0.0
   metroCertificatePath: 
   metroCertificatePassword: 
   metroCertificateSubject: 
@@ -878,7 +878,7 @@ PlayerSettings:
   metroCertificateNotAfter: 0000000000000000
   metroApplicationDescription: convaiquick
   wsaImages: {}
-  metroTileShortName: 
+  metroTileShortName: convaiquick
   metroTileShowName: 0
   metroMediumTileShowName: 0
   metroLargeTileShowName: 0
@@ -945,7 +945,7 @@ PlayerSettings:
   qnxGraphicConfPath: 
   apiCompatibilityLevel: 6
   captureStartupLogs: {}
-  activeInputHandler: 1
+  activeInputHandler: 2
   windowsGamepadBackendHint: 0
   enableDirectStorage: 0
   cloudProjectId: b1c4e626-8a7b-47a1-bcfc-8ff2b8d5d2e3

@@ -25,6 +25,7 @@ namespace Convai.Scripts.Runtime.Core
 
         public bool IsTalkKeyHeld { get; private set; }
         public Action<bool> talkKeyInteract;
+        public static Func<bool> ShouldSuppressTalkInput;
 
 #if ENABLE_INPUT_SYSTEM
         private Controls _controls;
@@ -124,6 +125,12 @@ namespace Convai.Scripts.Runtime.Core
 
         public void OnTalk(InputAction.CallbackContext context)
         {
+            if (ShouldSuppressTalkInput?.Invoke() == true)
+            {
+                IsTalkKeyHeld = false;
+                return;
+            }
+
             if (context.performed)
             {
                 talkKeyInteract?.Invoke(true);
@@ -168,13 +175,24 @@ namespace Convai.Scripts.Runtime.Core
             if (Input.GetKeyDown(OpenSettingPanelKey)) toggleSettings?.Invoke();
             if (Input.GetKeyDown(TalkKey))
             {
-                talkKeyInteract?.Invoke(true);
-                IsTalkKeyHeld = true;
+                if (ShouldSuppressTalkInput?.Invoke() == true)
+                {
+                    IsTalkKeyHeld = false;
+                }
+                else
+                {
+                    talkKeyInteract?.Invoke(true);
+                    IsTalkKeyHeld = true;
+                }
             }
 
             if (Input.GetKeyUp(TalkKey))
             {
-                talkKeyInteract?.Invoke(false);
+                if (ShouldSuppressTalkInput?.Invoke() != true)
+                {
+                    talkKeyInteract?.Invoke(false);
+                }
+
                 IsTalkKeyHeld = false;
             }
 #endif

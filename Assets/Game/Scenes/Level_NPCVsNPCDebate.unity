@@ -524,6 +524,63 @@ Transform:
   - {fileID: 1109866436}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1001 &711067491
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 101928, guid: 966d2b798e0a0e044876ba6826f06a5b, type: 3}
+      propertyPath: m_Name
+      value: RTVoice
+      objectReference: {fileID: 0}
+    - target: {fileID: 411916, guid: 966d2b798e0a0e044876ba6826f06a5b, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 411916, guid: 966d2b798e0a0e044876ba6826f06a5b, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 411916, guid: 966d2b798e0a0e044876ba6826f06a5b, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 411916, guid: 966d2b798e0a0e044876ba6826f06a5b, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 411916, guid: 966d2b798e0a0e044876ba6826f06a5b, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 411916, guid: 966d2b798e0a0e044876ba6826f06a5b, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 411916, guid: 966d2b798e0a0e044876ba6826f06a5b, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 411916, guid: 966d2b798e0a0e044876ba6826f06a5b, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 411916, guid: 966d2b798e0a0e044876ba6826f06a5b, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 411916, guid: 966d2b798e0a0e044876ba6826f06a5b, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 966d2b798e0a0e044876ba6826f06a5b, type: 3}
 --- !u!1 &731281561
 GameObject:
   m_ObjectHideFlags: 0
@@ -568,6 +625,7 @@ GameObject:
   m_Component:
   - component: {fileID: 763742167}
   - component: {fileID: 763742166}
+  - component: {fileID: 763742168}
   m_Layer: 0
   m_Name: Debate Round System
   m_TagString: Untagged
@@ -589,6 +647,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.NpcDebateRoundManager
   startOnPlay: 0
   roundDurationSeconds: 180
+  useRoundTimer: 1
   openingCaptionSeconds: 2.5
   closingCaptionSeconds: 5
   endConversationWhenTimeExpires: 1
@@ -603,6 +662,7 @@ MonoBehaviour:
   refereePresentation: {fileID: 4100100004}
   startButton: {fileID: 903964741}
   unlockCursorBeforeStart: 1
+  waitForExternalStart: 1
   timerText: {fileID: 1186777323}
   timerPrefix: 'Time Left '
   conversationManager: {fileID: 1297513123}
@@ -626,6 +686,47 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &763742168
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 763742165}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9a968b56df9954947bbe141603ff5276, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.NpcDebateLearningPhaseController
+  participantId: PILOT
+  condition: npc_vs_npc
+  roundManager: {fileID: 763742166}
+  unlockCursorDuringLearning: 1
+  primaryDemoNPC: {fileID: 269995630}
+  secondaryDemoNPC: {fileID: 0}
+  playNpcVoice: 1
+  useRtVoiceTts: 1
+  annaRtVoiceNameHints: Jenny;Aria;Zira;Samantha;Susan
+  mikeRtVoiceNameHints: David;Guy;Mark;George;Daniel
+  rtVoiceCulture: en
+  annaRtVoiceRate: 0.92
+  annaRtVoicePitch: 1.02
+  mikeRtVoiceRate: 0.9
+  mikeRtVoicePitch: 0.95
+  rtVoiceVolume: 0.9
+  logRtVoiceSelection: 1
+  reloadRtVoiceProviderIfVoiceMissing: 1
+  useLocalCachedTts: 1
+  fallbackToConvaiVoiceIfClipMissing: 0
+  demoLineSeconds: 6
+  panelWorldAnchor: {fileID: 0}
+  panelSize: {x: 1450, y: 1150}
+  panelWorldScale: 0.0025085
+  useFixedPanelTransform: 1
+  fixedPanelPosition: {x: -0.31524, y: 1.0433, z: 3.7437}
+  fixedPanelEulerAngles: {x: 0, y: 0, z: 0}
+  defaultForwardOffset: 1.2
+  defaultDownOffset: 0.75
 --- !u!1 &832997651
 GameObject:
   m_ObjectHideFlags: 0
@@ -3143,6 +3244,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: Referee Steve Model
       objectReference: {fileID: 0}
+    - target: {fileID: 5889922259804093746, guid: 56cfe70dc09a93146a7cec3da81e844f, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 6381249677378609260, guid: 56cfe70dc09a93146a7cec3da81e844f, type: 3}
       propertyPath: m_Enabled
       value: 0
@@ -3265,3 +3370,4 @@ SceneRoots:
   - {fileID: 636640072}
   - {fileID: 86587541}
   - {fileID: 763742167}
+  - {fileID: 711067491}

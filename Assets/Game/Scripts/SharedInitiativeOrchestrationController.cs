@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Convai.Scripts.Runtime.Core;
@@ -13,8 +14,9 @@ namespace Game.Debate
     public enum OrchestrationPhase
     {
         Intro,
-        ConversationTurn,
-        CoachPaused,
+        OpponentSpeaking,
+        WaitingForPlayer,
+        CoachGenerating,
         CoachSuggestionReady,
         Complete
     }
@@ -27,23 +29,34 @@ namespace Game.Debate
         public string taskGoal;
         public int completedTurns;
         public string latestLearnerNote;
+        public string latestOpponentUtterance;
         public string latestCoachSuggestion;
     }
 
     public sealed class SharedInitiativeOrchestrationController : MonoBehaviour
     {
+        public const bool DefaultAutomaticCoachAfterPlayerVoice = true;
+        public const bool DefaultShowManualPauseButton = false;
+
         [Header("Agents")]
         [SerializeField] private NPC2NPCConversationManager conversationManager;
         [SerializeField] private ConvaiNPC conversationNPC;
         [SerializeField] private ConvaiNPC coachNPC;
 
         [Header("Task")]
+        [SerializeField] private string participantId = "PILOT";
+        [SerializeField] private string condition = "Condition C";
+        [SerializeField] private string topicId = "reading_vs_speaking";
         [SerializeField]
         private string debateTopic =
             "Reading and speaking, which is more important in learning English?";
         [SerializeField] private string learnerStance = "Speaking is more important for learning English.";
-        [SerializeField] private string taskGoal = "Discuss with the NPC, pause for coach advice, then continue.";
+        [SerializeField] private string taskGoal = "Practice debate with post-turn strategy coaching.";
         [SerializeField] private int maxConversationTurns = 3;
+        [SerializeField] private string selectedStrategy = "Logos";
+        [SerializeField] private string[] previousCommands = Array.Empty<string>();
+        [SerializeField] private string[] previousNpcVersionsViewed = Array.Empty<string>();
+
         [TextArea(2, 6)]
         [SerializeField]
         private string npcOpeningPrompt =
@@ -55,35 +68,50 @@ namespace Game.Debate
         [TextArea(2, 4)]
         [SerializeField]
         private string closingText =
-            "Good work. The guided conversation is complete.";
+            "Good work. The guided practice debate is complete.";
+
+        [Header("Coach")]
+        [SerializeField] private bool automaticCoachAfterPlayerVoice = DefaultAutomaticCoachAfterPlayerVoice;
+        [SerializeField] private bool showManualPauseButton = DefaultShowManualPauseButton;
+        [SerializeField] private bool speakCoachFeedback;
+        [SerializeField] private string openAIModel = "gpt-4o-mini";
+        [SerializeField] private string openAIBaseUrl = "https://api.meding.site";
+        [SerializeField] private string openAIApiKeyOverride = "";
+        [SerializeField] private float coachResponseTimeoutSeconds = 10f;
 
         [Header("UI")]
         [SerializeField] private Canvas uiCanvas;
         [SerializeField] private GameObject legacyInteractiveControls;
         [SerializeField] private GameObject legacyStartButton;
+        [SerializeField] private GameObject legacyRoundTimer;
+        [SerializeField] private InteractiveDebateTranscriptBridge transcriptBridge;
         [SerializeField] private bool unlockCursorForControlUi = true;
-
-        [Header("Timing")]
-        [SerializeField] private float coachResponseTimeoutSeconds = 18f;
 
         public ConditionCSessionRecord SessionRecord = new();
         public OrchestrationPhase Phase { get; private set; } = OrchestrationPhase.Intro;
 
-        private readonly StringBuilder _coachTranscript = new();
+        private readonly StringBuilder _opponentTranscript = new();
+        private readonly List<CoachFeedbackLogRow> _pendingFeedbackRows = new();
 
+        private DebateCoachFeedbackGenerator _coachGenerator;
+        private DebateCoachLogger _coachLogger;
         private GameObject _root;
         private TMP_Text _titleText;
         private TMP_Text _taskText;
         private TMP_Text _statusText;
+        private TMP_Text _playerText;
         private TMP_Text _coachText;
         private TMP_InputField _learnerNoteInput;
         private Button _startButton;
         private Button _pauseForCoachButton;
         private Button _continueButton;
-        private Button _askAgainButton;
+        private Button _exampleButton;
         private Button _endButton;
         private Coroutine _coachRoutine;
         private int _turnIndex;
+        private bool _exampleRequestedForCurrentTurn;
+        private string _latestPlayerUtterance = string.Empty;
+        private string _latestFeedbackText = string.Empty;
 
         private void Awake()
         {
@@ -91,8 +119,28 @@ namespace Game.Debate
             HideLegacyUi();
         }
 
+        private void OnEnable()
+        {
+            RegisterVoiceInterceptor();
+        }
+
+        private void OnDisable()
+        {
+            UnregisterVoiceInterceptor();
+        }
+
         private IEnumerator Start()
         {
+            _coachGenerator = new DebateCoachFeedbackGenerator(
+                openAIModel,
+                coachResponseTimeoutSeconds,
+                openAIBaseUrl,
+                openAIApiKeyOverride);
+            _coachLogger = new DebateCoachLogger();
+            transcriptBridge = transcriptBridge != null
+                ? transcriptBridge
+                : GetComponent<InteractiveDebateTranscriptBridge>();
+
             SessionRecord.topic = debateTopic;
             SessionRecord.learnerStance = learnerStance;
             SessionRecord.taskGoal = taskGoal;
@@ -102,7 +150,8 @@ namespace Game.Debate
                 conversationManager.RelayInterceptor = null;
             }
 
-            SubscribeToCoachAudio();
+            SubscribeToConversationAudio();
+            RegisterVoiceInterceptor();
 
             yield return null;
             EnterIntro();
@@ -116,7 +165,8 @@ namespace Game.Debate
                 _coachRoutine = null;
             }
 
-            UnsubscribeFromCoachAudio();
+            UnregisterVoiceInterceptor();
+            UnsubscribeFromConversationAudio();
             SetControlCursor(false);
         }
 
@@ -134,36 +184,35 @@ namespace Game.Debate
             }
 
             _turnIndex = 0;
+            _pendingFeedbackRows.Clear();
+            _latestPlayerUtterance = string.Empty;
+            _latestFeedbackText = string.Empty;
             SessionRecord.completedTurns = 0;
             SessionRecord.latestLearnerNote = string.Empty;
+            SessionRecord.latestOpponentUtterance = string.Empty;
             SessionRecord.latestCoachSuggestion = string.Empty;
             _learnerNoteInput.text = string.Empty;
-            _coachText.text = "Coach advice will appear here after you pause.";
+            _playerText.text = "Your response transcript will appear here after you speak.";
+            _coachText.text = "Coach feedback will appear after your response.";
 
             StartNpcTurn(FormatTaskText(npcOpeningPrompt));
         }
 
         public void PauseForCoach()
         {
-            if (Phase != OrchestrationPhase.ConversationTurn)
+            if (Phase != OrchestrationPhase.WaitingForPlayer && Phase != OrchestrationPhase.OpponentSpeaking)
             {
                 return;
             }
 
-            Phase = OrchestrationPhase.CoachPaused;
-            SessionRecord.completedTurns = Mathf.Max(SessionRecord.completedTurns, _turnIndex);
-            SessionRecord.latestLearnerNote = _learnerNoteInput.text.Trim();
-            ConvaiNPCManager.Instance?.SetActiveConvaiNPC(coachNPC);
-            SetControlCursor(true);
-            SetStatus("Paused. Coach is preparing advice...");
-            SetButtonsForPhase();
-
-            if (_coachRoutine != null)
+            string typedNote = _learnerNoteInput.text.Trim();
+            if (string.IsNullOrWhiteSpace(typedNote))
             {
-                StopCoroutine(_coachRoutine);
+                SetStatus("Speak with T first, or type a note before manually requesting Coach feedback.");
+                return;
             }
 
-            _coachRoutine = StartCoroutine(RequestCoachAdvice());
+            HandlePlayerUtterance(typedNote, true);
         }
 
         public void ContinueConversation()
@@ -173,48 +222,43 @@ namespace Game.Debate
                 return;
             }
 
+            FlushPendingFeedbackRows(DateTime.UtcNow.ToString("o"));
+
             if (_turnIndex >= maxConversationTurns)
             {
-                EndConditionC();
+                StartCoroutine(RequestCoachFeedback(CoachFeedbackLevel.Summary, false));
                 return;
             }
 
             _learnerNoteInput.text = string.Empty;
-            StartNpcTurn(FormatTaskText(npcFollowUpPrompt));
+            string prompt = BuildFollowUpPrompt();
+            StartNpcTurn(prompt);
         }
 
-        public void AskCoachAgain()
+        public void RequestExample()
         {
-            if (Phase != OrchestrationPhase.CoachSuggestionReady && Phase != OrchestrationPhase.CoachPaused)
+            if (Phase != OrchestrationPhase.CoachSuggestionReady || _exampleRequestedForCurrentTurn)
             {
                 return;
             }
 
-            Phase = OrchestrationPhase.CoachPaused;
-            SessionRecord.latestLearnerNote = _learnerNoteInput.text.Trim();
-            ConvaiNPCManager.Instance?.SetActiveConvaiNPC(coachNPC);
-            SetStatus("Coach is revising the suggestion...");
-            SetButtonsForPhase();
+            _exampleRequestedForCurrentTurn = true;
+            StartCoroutine(RequestCoachFeedback(CoachFeedbackLevel.Level3, true));
+        }
 
-            if (_coachRoutine != null)
-            {
-                StopCoroutine(_coachRoutine);
-            }
-
-            _coachRoutine = StartCoroutine(RequestCoachAdvice());
+        public void AskCoachAgain()
+        {
+            RequestExample();
         }
 
         public void EndConditionC()
         {
+            FlushPendingFeedbackRows(string.Empty);
             Phase = OrchestrationPhase.Complete;
             ConvaiNPCManager.Instance?.SetActiveConvaiNPC(coachNPC != null ? coachNPC : conversationNPC);
             SetControlCursor(true);
             SetStatus(closingText);
             _coachText.text = "Session complete.";
-            if (coachNPC != null)
-            {
-                coachNPC.SendTextDataAsync(closingText);
-            }
             SetButtonsForPhase();
         }
 
@@ -225,129 +269,270 @@ namespace Game.Debate
 
         private void StartNpcTurn(string prompt)
         {
-            Phase = OrchestrationPhase.ConversationTurn;
+            Phase = OrchestrationPhase.OpponentSpeaking;
             _turnIndex++;
+            _opponentTranscript.Clear();
+            _latestPlayerUtterance = string.Empty;
+            _latestFeedbackText = string.Empty;
+            _exampleRequestedForCurrentTurn = false;
             ConvaiNPCManager.Instance?.SetActiveConvaiNPC(conversationNPC);
             SetControlCursor(false);
-            SetStatus($"Turn {_turnIndex}: listen to the NPC, respond by voice, then press Pause For Coach.");
+            SetStatus($"Turn {_turnIndex}: listen to the opponent, then hold T and answer by voice.");
             SetButtonsForPhase();
             conversationNPC.SendTextDataAsync(prompt);
         }
 
-        private IEnumerator RequestCoachAdvice()
+        private bool TryHandlePlayerVoiceTranscript(string transcript)
         {
-            if (coachNPC == null)
+            if (!automaticCoachAfterPlayerVoice || !CanHandlePlayerVoiceTranscript())
             {
-                ApplyFallbackAdvice();
-                yield break;
+                return false;
             }
 
-            _coachTranscript.Clear();
-            _coachText.text = "Coach is thinking...";
-            coachNPC.SendTextDataAsync(BuildCoachPrompt());
-
-            float timeout = coachResponseTimeoutSeconds;
-            while (timeout > 0f)
+            string safeTranscript = transcript?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(safeTranscript))
             {
-                timeout -= Time.deltaTime;
-                if (_coachTranscript.Length > 0 && !coachNPC.IsCharacterTalking)
-                {
-                    break;
-                }
-
-                yield return null;
+                return true;
             }
 
-            string advice = ExtractAdvice(_coachTranscript.ToString());
-            if (string.IsNullOrWhiteSpace(advice))
+            FinalizeOpponentTurnForPlayerVoice();
+            HandlePlayerUtterance(safeTranscript, false);
+            return true;
+        }
+
+        private bool CanHandlePlayerVoiceTranscript()
+        {
+            return Phase == OrchestrationPhase.WaitingForPlayer ||
+                   Phase == OrchestrationPhase.OpponentSpeaking;
+        }
+
+        private void FinalizeOpponentTurnForPlayerVoice()
+        {
+            if (Phase != OrchestrationPhase.OpponentSpeaking)
             {
-                ApplyFallbackAdvice();
-                yield break;
+                return;
             }
 
-            SessionRecord.latestCoachSuggestion = advice;
-            _coachText.text = advice;
-            Phase = OrchestrationPhase.CoachSuggestionReady;
-            SetStatus("Coach advice is ready. Press Continue when you want the NPC conversation to resume.");
+            SessionRecord.latestOpponentUtterance = _opponentTranscript.ToString().Trim();
+            Phase = OrchestrationPhase.WaitingForPlayer;
+            Debug.Log("SharedInitiativeOrchestrationController accepted player voice while the opponent-speaking phase was still active.");
+        }
+
+        private void HandlePlayerUtterance(string transcript, bool fromTypedFallback)
+        {
+            _latestPlayerUtterance = transcript.Trim();
+            SessionRecord.completedTurns = Mathf.Max(SessionRecord.completedTurns, _turnIndex);
+            SessionRecord.latestLearnerNote = _latestPlayerUtterance;
+            _learnerNoteInput.text = _latestPlayerUtterance;
+            _playerText.text = "You: " + _latestPlayerUtterance;
+            transcriptBridge?.PublishPlayerUtterance(_latestPlayerUtterance);
+            SetStatus(fromTypedFallback ? "Coach is reading your typed note..." : "Voice captured. Coach is preparing feedback...");
+            StartCoroutine(RequestCoachFeedback(CoachFeedbackLevel.Level2, false));
+        }
+
+        private IEnumerator RequestCoachFeedback(CoachFeedbackLevel level, bool exampleRequested)
+        {
+            Phase = OrchestrationPhase.CoachGenerating;
+            SetControlCursor(true);
+            SetButtonsForPhase();
+            ConvaiNPCManager.Instance?.SetActiveConvaiNPC(coachNPC);
+
+            CoachFeedbackRequest request = BuildCoachRequest(level);
+            _coachText.text = level == CoachFeedbackLevel.Summary
+                ? "Coach is preparing your practice summary..."
+                : level == CoachFeedbackLevel.Level3
+                    ? "Coach is preparing a short example frame..."
+                    : "Coach is thinking...";
+
+            CoachFeedbackResult result = null;
+            yield return (_coachGenerator ??= new DebateCoachFeedbackGenerator(
+                    openAIModel,
+                    coachResponseTimeoutSeconds,
+                    openAIBaseUrl,
+                    openAIApiKeyOverride))
+                .GenerateFeedback(request, feedback => result = feedback);
+
+            result ??= DebateCoachFeedbackGenerator.BuildLocalFallback(request);
+            ApplyCoachFeedback(request, result, exampleRequested);
+        }
+
+        private void ApplyCoachFeedback(CoachFeedbackRequest request, CoachFeedbackResult result, bool exampleRequested)
+        {
+            string feedback = result.FeedbackText?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(feedback))
+            {
+                result = DebateCoachFeedbackGenerator.BuildLocalFallback(request);
+                feedback = result.FeedbackText;
+            }
+
+            SessionRecord.latestCoachSuggestion = feedback;
+            _latestFeedbackText = feedback;
+            _coachText.text = feedback;
+            transcriptBridge?.PublishCoachLine(feedback);
+
+            CoachFeedbackLogRow row = BuildLogRow(request, result, exampleRequested);
+            if (result.FeedbackLevel == CoachFeedbackLevel.Summary)
+            {
+                (_coachLogger ??= new DebateCoachLogger()).LogFeedback(row);
+                Phase = OrchestrationPhase.Complete;
+                SetStatus("Practice debate complete. Coach summary is ready.");
+            }
+            else
+            {
+                _pendingFeedbackRows.Add(row);
+                Phase = OrchestrationPhase.CoachSuggestionReady;
+                SetStatus(result.FeedbackLevel == CoachFeedbackLevel.Level3
+                    ? "Example frame ready. Press Continue when you are ready for the next opponent turn."
+                    : "Coach feedback is ready. You can request an example or press Continue.");
+            }
+
+            if (speakCoachFeedback && coachNPC != null)
+            {
+                coachNPC.SendTextDataAsync(DebateLearningContent.GetRepeatExactlyPrompt(feedback));
+            }
+
             SetButtonsForPhase();
         }
 
-        private string BuildCoachPrompt()
+        private CoachFeedbackRequest BuildCoachRequest(CoachFeedbackLevel level)
         {
-            string learnerNote = string.IsNullOrWhiteSpace(SessionRecord.latestLearnerNote)
-                ? "No learner transcript was typed. Infer from the task context and give one general next-step suggestion."
-                : SessionRecord.latestLearnerNote;
-
-            return
-                "You are a debate coach for an English learning task.\n" +
-                $"Debate topic: {debateTopic}\n" +
-                $"Learner stance: {learnerStance}\n" +
-                $"Task goal: {taskGoal}\n" +
-                $"Current turn: {_turnIndex}\n\n" +
-                "Learner's latest response or note:\n" +
-                $"{learnerNote}\n\n" +
-                "Give one short, actionable suggestion before the learner continues. " +
-                "Use one of Logos, Ethos, or Pathos if helpful. " +
-                "Output exactly:\n" +
-                "COACH_ADVICE: one or two short sentences";
-        }
-
-        private void ApplyFallbackAdvice()
-        {
-            string advice = "Logos: add one clear reason and one example before you answer the next challenge.";
-            SessionRecord.latestCoachSuggestion = advice;
-            _coachText.text = advice;
-            Phase = OrchestrationPhase.CoachSuggestionReady;
-            SetStatus("Coach advice is ready. Press Continue when you want the NPC conversation to resume.");
-            SetButtonsForPhase();
-        }
-
-        private static string ExtractAdvice(string response)
-        {
-            if (string.IsNullOrWhiteSpace(response))
+            return new CoachFeedbackRequest
             {
-                return string.Empty;
+                Condition = condition,
+                Stage = "Practice Debate",
+                TopicId = topicId,
+                Topic = debateTopic,
+                PlayerSide = learnerStance,
+                TurnId = _turnIndex,
+                OpponentUtteranceText = SessionRecord.latestOpponentUtterance,
+                PlayerUtteranceText = _latestPlayerUtterance,
+                SelectedStrategy = selectedStrategy,
+                PreviousCommands = previousCommands ?? Array.Empty<string>(),
+                PreviousNpcVersionsViewed = previousNpcVersionsViewed ?? Array.Empty<string>(),
+                FeedbackLevel = level
+            };
+        }
+
+        private CoachFeedbackLogRow BuildLogRow(
+            CoachFeedbackRequest request,
+            CoachFeedbackResult result,
+            bool exampleRequested)
+        {
+            return new CoachFeedbackLogRow
+            {
+                ParticipantId = participantId,
+                Condition = request.Condition,
+                Stage = request.Stage,
+                TopicId = request.TopicId,
+                TurnId = request.TurnId,
+                PlayerSide = request.PlayerSide,
+                OpponentUtteranceText = request.OpponentUtteranceText,
+                PlayerUtteranceText = request.PlayerUtteranceText,
+                SelectedStrategy = request.SelectedStrategy,
+                PreviousCommandCount = request.PreviousCommands?.Length ?? 0,
+                PreviousCommandTypes = string.Join(";", request.PreviousCommands ?? Array.Empty<string>()),
+                CoachTriggered = true,
+                CoachFeedbackLevel = result.FeedbackLevel.ToString(),
+                CoachFeedbackType = result.FeedbackType,
+                CoachStrongComponent = result.StrongComponent,
+                CoachWeakComponent = result.WeakComponent,
+                CoachDominantStrategy = result.DominantStrategy,
+                CoachRecommendedStrategy = result.RecommendedStrategy,
+                CoachNextAction = result.NextAction,
+                CoachFeedbackText = result.FeedbackText,
+                ExampleRequested = exampleRequested,
+                TimestampFeedbackShown = DateTime.UtcNow.ToString("o")
+            };
+        }
+
+        private void FlushPendingFeedbackRows(string timestampNextPlayerTurnStarted)
+        {
+            if (_pendingFeedbackRows.Count == 0)
+            {
+                return;
             }
 
-            string trimmed = response.Trim();
-            string marker = "COACH_ADVICE:";
-            int markerIndex = trimmed.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-            if (markerIndex >= 0)
+            DebateCoachLogger logger = _coachLogger ??= new DebateCoachLogger();
+            for (int i = 0; i < _pendingFeedbackRows.Count; i++)
             {
-                return trimmed[(markerIndex + marker.Length)..].Trim();
+                _pendingFeedbackRows[i].TimestampNextPlayerTurnStarted = timestampNextPlayerTurnStarted;
+                logger.LogFeedback(_pendingFeedbackRows[i]);
             }
 
-            return trimmed;
+            _pendingFeedbackRows.Clear();
         }
 
-        private void CaptureCoachAudio(ConvaiNPCAudioManager.ResponseAudio response)
+        private string BuildFollowUpPrompt()
+        {
+            return FormatTaskText(npcFollowUpPrompt) + "\n\n" +
+                   "Learner's latest response: \"" + _latestPlayerUtterance + "\"\n" +
+                   "Coach's latest feedback to the learner: \"" + _latestFeedbackText + "\"\n" +
+                   "Now continue as the opponent. Ask one concise challenge or follow-up, then wait.";
+        }
+
+        private void CaptureOpponentAudio(ConvaiNPCAudioManager.ResponseAudio response)
         {
             if (response == null || response.IsFinal || string.IsNullOrWhiteSpace(response.AudioTranscript))
             {
                 return;
             }
 
-            if (_coachTranscript.Length > 0)
+            if (_opponentTranscript.Length > 0)
             {
-                _coachTranscript.Append(' ');
+                _opponentTranscript.Append(' ');
             }
 
-            _coachTranscript.Append(response.AudioTranscript.Trim());
+            _opponentTranscript.Append(response.AudioTranscript.Trim());
+            SessionRecord.latestOpponentUtterance = _opponentTranscript.ToString();
         }
 
-        private void SubscribeToCoachAudio()
+        private void HandleOpponentTalkingChanged(bool isTalking)
         {
-            if (coachNPC != null && coachNPC.AudioManager != null)
+            if (isTalking || Phase != OrchestrationPhase.OpponentSpeaking)
             {
-                coachNPC.AudioManager.OnResponseAudioStarted += CaptureCoachAudio;
+                return;
+            }
+
+            SessionRecord.latestOpponentUtterance = _opponentTranscript.ToString().Trim();
+            Phase = OrchestrationPhase.WaitingForPlayer;
+            SetControlCursor(false);
+            SetStatus($"Turn {_turnIndex}: hold T and answer the opponent. Coach feedback will appear after you finish.");
+            SetButtonsForPhase();
+        }
+
+        private void SubscribeToConversationAudio()
+        {
+            if (conversationNPC != null && conversationNPC.AudioManager != null)
+            {
+                conversationNPC.AudioManager.OnResponseAudioStarted += CaptureOpponentAudio;
+                conversationNPC.AudioManager.OnCharacterTalkingChanged += HandleOpponentTalkingChanged;
             }
         }
 
-        private void UnsubscribeFromCoachAudio()
+        private void UnsubscribeFromConversationAudio()
         {
-            if (coachNPC != null && coachNPC.AudioManager != null)
+            if (conversationNPC != null && conversationNPC.AudioManager != null)
             {
-                coachNPC.AudioManager.OnResponseAudioStarted -= CaptureCoachAudio;
+                conversationNPC.AudioManager.OnResponseAudioStarted -= CaptureOpponentAudio;
+                conversationNPC.AudioManager.OnCharacterTalkingChanged -= HandleOpponentTalkingChanged;
+            }
+        }
+
+        private void RegisterVoiceInterceptor()
+        {
+            if (!Application.isPlaying || !automaticCoachAfterPlayerVoice)
+            {
+                return;
+            }
+
+            ConvaiGRPCAPI.TryHandleUserVoiceTranscript = TryHandlePlayerVoiceTranscript;
+        }
+
+        private void UnregisterVoiceInterceptor()
+        {
+            if (ConvaiGRPCAPI.TryHandleUserVoiceTranscript == (Func<string, bool>)TryHandlePlayerVoiceTranscript)
+            {
+                ConvaiGRPCAPI.TryHandleUserVoiceTranscript = null;
             }
         }
 
@@ -356,7 +541,8 @@ namespace Game.Debate
             Phase = OrchestrationPhase.Intro;
             SetControlCursor(true);
             SetStatus("Press Start Conversation when you are ready.");
-            _coachText.text = "Coach advice will appear here after you pause.";
+            _playerText.text = "Your response transcript will appear here after you speak.";
+            _coachText.text = "Coach feedback will appear after your response.";
             SetButtonsForPhase();
         }
 
@@ -374,16 +560,16 @@ namespace Game.Debate
                 return;
             }
 
-            _root = CreateRect("Shared Initiative Controls", uiCanvas.transform);
+            _root = CreateRect("Shared Initiative Coach Controls", uiCanvas.transform);
             RectTransform rootRect = _root.GetComponent<RectTransform>();
             rootRect.anchorMin = new Vector2(0f, 1f);
             rootRect.anchorMax = new Vector2(0f, 1f);
             rootRect.pivot = new Vector2(0f, 1f);
             rootRect.anchoredPosition = new Vector2(24f, -24f);
-            rootRect.sizeDelta = new Vector2(520f, 620f);
+            rootRect.sizeDelta = new Vector2(540f, 680f);
 
             Image background = _root.AddComponent<Image>();
-            background.color = new Color(0.05f, 0.07f, 0.09f, 0.72f);
+            background.color = new Color(0.05f, 0.07f, 0.09f, 0.76f);
 
             VerticalLayoutGroup layout = _root.AddComponent<VerticalLayoutGroup>();
             layout.padding = new RectOffset(18, 18, 16, 16);
@@ -393,22 +579,23 @@ namespace Game.Debate
             layout.childForceExpandWidth = true;
             layout.childForceExpandHeight = false;
 
-            _titleText = CreateText(_root.transform, "Condition C: Shared Initiative", 24, FontStyles.Bold, 34f);
+            _titleText = CreateText(_root.transform, "Condition C: Coach Agent", 24, FontStyles.Bold, 34f);
             _taskText = CreateText(_root.transform, string.Empty, 15, FontStyles.Normal, 92f);
             _statusText = CreateText(_root.transform, string.Empty, 15, FontStyles.Bold, 54f);
-            _coachText = CreateText(_root.transform, string.Empty, 16, FontStyles.Normal, 112f);
-            _learnerNoteInput = CreateInput(_root.transform, "Optional: type what you just said before asking the coach.", 82f);
+            _playerText = CreateText(_root.transform, string.Empty, 15, FontStyles.Normal, 82f);
+            _coachText = CreateText(_root.transform, string.Empty, 16, FontStyles.Normal, 122f);
+            _learnerNoteInput = CreateInput(_root.transform, "Optional typed fallback if voice transcription is unavailable.", 70f);
 
             _startButton = CreateButton(_root.transform, "Start Conversation", BeginConditionC, new Color(0.20f, 0.48f, 0.36f));
             _pauseForCoachButton = CreateButton(_root.transform, "Pause For Coach", PauseForCoach, new Color(0.72f, 0.50f, 0.18f));
-            _continueButton = CreateButton(_root.transform, "Continue Conversation", ContinueConversation, new Color(0.24f, 0.43f, 0.70f));
-            _askAgainButton = CreateButton(_root.transform, "Ask Coach Again", AskCoachAgain, new Color(0.42f, 0.36f, 0.64f));
+            _exampleButton = CreateButton(_root.transform, "Need an example?", RequestExample, new Color(0.42f, 0.36f, 0.64f));
+            _continueButton = CreateButton(_root.transform, "Continue", ContinueConversation, new Color(0.24f, 0.43f, 0.70f));
             _endButton = CreateButton(_root.transform, "End Session", EndConditionC, new Color(0.62f, 0.22f, 0.20f));
 
             _taskText.text =
                 $"Topic: {debateTopic}\n" +
                 $"Your stance: {learnerStance}\n" +
-                $"Goal: {taskGoal}";
+                $"Selected strategy: {selectedStrategy}";
         }
 
         private void HideLegacyUi()
@@ -423,33 +610,38 @@ namespace Game.Debate
                 legacyStartButton = GameObject.Find("Start Debate Button");
             }
 
+            if (legacyRoundTimer == null)
+            {
+                legacyRoundTimer = GameObject.Find("Round Timer");
+            }
+
             legacyInteractiveControls?.SetActive(false);
             legacyStartButton?.SetActive(false);
+            legacyRoundTimer?.SetActive(false);
         }
 
         private void SetButtonsForPhase()
         {
             bool intro = Phase == OrchestrationPhase.Intro || Phase == OrchestrationPhase.Complete;
-            bool conversation = Phase == OrchestrationPhase.ConversationTurn;
-            bool waitingCoach = Phase == OrchestrationPhase.CoachPaused;
+            bool waitingForPlayer = Phase == OrchestrationPhase.WaitingForPlayer;
             bool coachReady = Phase == OrchestrationPhase.CoachSuggestionReady;
+            bool activeSession = Phase != OrchestrationPhase.Intro && Phase != OrchestrationPhase.Complete;
 
             SetActive(_startButton, intro);
-            SetActive(_pauseForCoachButton, conversation);
+            SetActive(_pauseForCoachButton, showManualPauseButton && waitingForPlayer);
+            SetActive(_exampleButton, coachReady && !_exampleRequestedForCurrentTurn);
             SetActive(_continueButton, coachReady);
-            SetActive(_askAgainButton, coachReady);
-            SetActive(_endButton, conversation || waitingCoach || coachReady);
+            SetActive(_endButton, activeSession);
 
-            SetButtonInteractable(_pauseForCoachButton, conversation);
             SetButtonInteractable(_continueButton, coachReady);
-            SetButtonInteractable(_askAgainButton, coachReady);
+            SetButtonInteractable(_exampleButton, coachReady && !_exampleRequestedForCurrentTurn);
 
             if (_continueButton != null)
             {
                 TMP_Text label = _continueButton.GetComponentInChildren<TMP_Text>();
                 if (label != null)
                 {
-                    label.text = _turnIndex >= maxConversationTurns ? "Finish" : "Continue Conversation";
+                    label.text = _turnIndex >= maxConversationTurns ? "Finish & Show Summary" : "Continue";
                 }
             }
         }

@@ -116,3 +116,26 @@ Build1.rar
 /0617exe.zip
 /web/
 /_Backups/
+
+# Local assistant/editor state
+/.claude/
+
+# Local Unity recovery and scratch scene copies
+/[Aa]ssets/_Recovery/
+/[Aa]ssets/_Recovery.meta
+/[Aa]ssets/[Gg]ame/[Ss]cenes/backup/
+/[Aa]ssets/[Gg]ame/[Ss]cenes/backup.meta
+/[Aa]ssets/[Gg]ame/[Ss]cenes/Level_InteractiveNPCDebate 1.unity
+/[Aa]ssets/[Gg]ame/[Ss]cenes/Level_InteractiveNPCDebate 1.unity.meta
+
+# Asset Store packages kept local for license/safety.
+/[Aa]ssets/3D Book/
+/[Aa]ssets/3D Book.meta
+/[Aa]ssets/Plugins/
+/[Aa]ssets/Plugins.meta
+/[Aa]ssets/Editor Default Resources/
+/[Aa]ssets/Editor Default Resources.meta
+
+# Local service credentials should not be changed through commits.
+/[Aa]ssets/[Rr]esources/ConvaiAPIKey.asset
+/[Aa]ssets/[Rr]esources/ConvaiAPIKey.asset.meta

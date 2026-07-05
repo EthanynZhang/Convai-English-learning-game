@@ -58,6 +58,7 @@ namespace Game.Debate
 
         private void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
         {
+            NormalizeEventSystems();
             BuildUi();
             SetMenuOpen(false, false);
         }
@@ -216,16 +217,59 @@ namespace Game.Debate
         {
             if (FindFirstObjectByType<EventSystem>() != null)
             {
+                NormalizeEventSystems();
                 return;
             }
 
-            var eventSystemObject = new GameObject("EventSystem");
+            var eventSystemObject = new GameObject("Debate Pause EventSystem");
             DontDestroyOnLoad(eventSystemObject);
             eventSystemObject.AddComponent<EventSystem>();
 #if ENABLE_INPUT_SYSTEM
             eventSystemObject.AddComponent<UnityEngine.InputSystem.UI.InputSystemUIInputModule>();
 #else
             eventSystemObject.AddComponent<StandaloneInputModule>();
+#endif
+        }
+
+        private static void NormalizeEventSystems()
+        {
+            EventSystem[] eventSystems = FindObjectsByType<EventSystem>(FindObjectsInactive.Exclude);
+            if (eventSystems.Length == 0)
+            {
+                return;
+            }
+
+            EventSystem keep = eventSystems[0];
+            for (int i = 0; i < eventSystems.Length; i++)
+            {
+                if (eventSystems[i].gameObject.scene.name != "DontDestroyOnLoad")
+                {
+                    keep = eventSystems[i];
+                    break;
+                }
+            }
+
+            for (int i = 0; i < eventSystems.Length; i++)
+            {
+                EventSystem current = eventSystems[i];
+                if (current == keep)
+                {
+                    continue;
+                }
+
+                Destroy(current.gameObject);
+            }
+
+#if ENABLE_INPUT_SYSTEM
+            if (keep.GetComponent<UnityEngine.InputSystem.UI.InputSystemUIInputModule>() == null)
+            {
+                keep.gameObject.AddComponent<UnityEngine.InputSystem.UI.InputSystemUIInputModule>();
+            }
+#else
+            if (keep.GetComponent<StandaloneInputModule>() == null)
+            {
+                keep.gameObject.AddComponent<StandaloneInputModule>();
+            }
 #endif
         }
 

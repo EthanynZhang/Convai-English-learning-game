@@ -9,6 +9,11 @@ namespace Convai.Scripts.Runtime.Core
 {
     public class ConvaiPlayerInteractionManager : MonoBehaviour
     {
+        public static Func<string, bool> TryHandleTextSubmission;
+        public static Func<bool> ShouldSuppressChatToggle;
+        public static Func<bool> ShouldSuppressTalkInput;
+        public static Func<bool> ShouldSuppressNpcInteraction;
+
         private ConvaiChatUIHandler _convaiChatUIHandler;
         private ConvaiCrosshairHandler _convaiCrosshairHandler;
         private ConvaiNPC _convaiNPC;
@@ -48,18 +53,33 @@ namespace Convai.Scripts.Runtime.Core
 
         private void HandleInputSubmission(string input)
         {
-            if (!_convaiNPC.isCharacterActive || string.IsNullOrEmpty(input.Trim())) return;
+            string trimmedInput = input?.Trim();
+            if (string.IsNullOrEmpty(trimmedInput)) return;
+
+            if (TryHandleTextSubmission?.Invoke(trimmedInput) == true)
+            {
+                ClearInputField();
+                return;
+            }
+
+            if (!_convaiNPC.isCharacterActive) return;
             _convaiNPC.InterruptCharacterSpeech();
             UpdateActionConfig();
-            _convaiNPC.SendTextDataAsync(input);
-            _convaiChatUIHandler.SendPlayerText(input);
+            _convaiNPC.SendTextDataAsync(trimmedInput);
+            _convaiChatUIHandler.SendPlayerText(trimmedInput);
             ClearInputField();
         }
 
         public TMP_InputField FindActiveInputField()
         {
             // TODO : Implement Text Send for ChatUIBase and get input field directly instead of finding here
-            return _convaiChatUIHandler.GetCurrentUI().GetCanvasGroup().gameObject.GetComponentsInChildren<TMP_InputField>(true)
+            if (_convaiChatUIHandler == null || _convaiChatUIHandler.GetCurrentUI() == null)
+            {
+                return null;
+            }
+
+            return _convaiChatUIHandler.GetCurrentUI().GetCanvasGroup().gameObject
+                .GetComponentsInChildren<TMP_InputField>(true)
                 .FirstOrDefault(inputField => inputField.interactable);
         }
 
@@ -74,7 +94,9 @@ namespace Convai.Scripts.Runtime.Core
 
         private void HandleToggleChat()
         {
+            if (ShouldSuppressChatToggle?.Invoke() == true) return;
             TMP_InputField inputFieldInScene = FindActiveInputField();
+            if (inputFieldInScene == null) return;
             if (!inputFieldInScene.isFocused && _convaiNPC.isCharacterActive)
             {
                 inputFieldInScene.ActivateInputField();
@@ -86,11 +108,12 @@ namespace Convai.Scripts.Runtime.Core
             TMP_InputField inputFieldInScene = FindActiveInputField();
 
             UpdateCurrentInputField(inputFieldInScene);
-            if (_currentInputField != null && _currentInputField.isFocused && _convaiNPC.isCharacterActive) HandleInputSubmission(_currentInputField.text);
+            if (_currentInputField != null && _currentInputField.isFocused) HandleInputSubmission(_currentInputField.text);
         }
 
         private void HandleVoiceInput(bool listenState)
         {
+            if (ShouldSuppressTalkInput?.Invoke() == true) return;
             if (UIUtilities.IsAnyInputFieldFocused() || !_convaiNPC.isCharacterActive) return;
             switch (listenState)
             {
@@ -109,6 +132,7 @@ namespace Convai.Scripts.Runtime.Core
 
         private void HandleNPCInteraction(bool state)
         {
+            if (ShouldSuppressNpcInteraction?.Invoke() == true || ShouldSuppressTalkInput?.Invoke() == true) return;
             if (!IsNpcInConversation() || !state || UIUtilities.IsAnyInputFieldFocused()) return;
             NPC2NPCConversationManager.Instance.EndConversation(_convaiNPC.GetComponent<ConvaiGroupNPCController>());
             _convaiNPC.InterruptCharacterSpeech();

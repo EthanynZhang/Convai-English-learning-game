@@ -10,6 +10,8 @@ namespace Convai.Scripts.Runtime.Addons
     /// </summary>
     public class TalkButtonDurationChecker : MonoBehaviour
     {
+        public static System.Func<bool> ShouldDisableTalkDurationLimit;
+
         /// <summary>
         ///     Minimum duration required for a valid talk action.
         /// </summary>
@@ -40,6 +42,13 @@ namespace Convai.Scripts.Runtime.Addons
         /// </summary>
         private void Update()
         {
+            if (ShouldDisableTalkDurationLimit?.Invoke() == true)
+            {
+                _timer = MIN_TALK_DURATION;
+                isTalkKeyReleasedEarly = false;
+                return;
+            }
+
             // Check if the talk button is being held down and increment the timer based on the time passed since the last frame.
             if (ConvaiInputManager.Instance.IsTalkKeyHeld && !UIUtilities.IsAnyInputFieldFocused()) _timer += Time.deltaTime;
         }
@@ -102,6 +111,11 @@ namespace Convai.Scripts.Runtime.Addons
         {
             // Initialize the flag to false.
             isTalkKeyReleasedEarly = false;
+
+            if (ShouldDisableTalkDurationLimit?.Invoke() == true)
+            {
+                return;
+            }
 
             // Trigger a notification if the talk button is released before reaching the minimum required duration.
             if (_timer < MIN_TALK_DURATION)
