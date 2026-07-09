@@ -167,7 +167,8 @@ namespace Convai.Scripts.Runtime.Core
             SslCredentials credentials = new(); // Create SSL credentials for secure communication
             List<ChannelOption> options = new()
             {
-                new ChannelOption(ChannelOptions.MaxReceiveMessageLength, 16 * 1024 * 1024)
+                new ChannelOption(ChannelOptions.MaxReceiveMessageLength, 16 * 1024 * 1024),
+                new ChannelOption("grpc.enable_http_proxy", 0)
             };
             _channel = new Channel(GRPC_API_ENDPOINT, credentials, options); // Initialize a gRPC channel with the specified endpoint and credentials
             _client = new ConvaiService.ConvaiServiceClient(_channel); // Initialize the gRPC client for the ConvaiService using the channel
@@ -344,7 +345,7 @@ namespace Convai.Scripts.Runtime.Core
             try
             {
                 await ConvaiGRPCAPI.Instance.SendTextData(_client, text, characterID,
-                    _isActionActive, _isLipSyncActive, ActionConfig, FaceModel, SpeakerID);
+                    _isActionActive, _isLipSyncActive, ActionConfig, FaceModel, SpeakerID, this);
             }
             catch (Exception ex)
             {

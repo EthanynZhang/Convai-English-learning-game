@@ -89,9 +89,9 @@ namespace Convai.Scripts.Runtime.Features
                     _cancellationTokenSource.Token);
                 await receiveResultsTask.ConfigureAwait(false);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // ignored
+                ConvaiLogger.Warn($"NPC2NPC text request failed before receiving a response: {ex.Message}", ConvaiLogger.LogCategory.Character);
             }
         }
 

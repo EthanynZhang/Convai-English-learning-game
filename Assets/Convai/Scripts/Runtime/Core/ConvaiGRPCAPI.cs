@@ -38,6 +38,7 @@ namespace Convai.Scripts.Runtime.Core
         private ConvaiChatUIHandler _chatUIHandler;
         private string _currentTranscript;
         private string _isFinalUserQueryTextBuffer = "";
+        private bool _currentVoiceTranscriptHandled;
         private bool _suppressCurrentVoiceResponse;
 
         private void Awake()
@@ -198,10 +199,11 @@ namespace Convai.Scripts.Runtime.Core
         /// <param name="speakerId">Speaker ID of the Player</param>
         /// <returns>A task that represents the asynchronous operation.</returns>
         public async Task SendTextData(ConvaiService.ConvaiServiceClient client, string userText, string characterID, bool isActionActive, bool isLipSyncActive,
-            ActionConfig actionConfig, FaceModel faceModel, string speakerId)
+            ActionConfig actionConfig, FaceModel faceModel, string speakerId, ConvaiNPC sendingNPC = null)
         {
-            AsyncDuplexStreamingCall<GetResponseRequest, GetResponseResponse> call =
-                GetAsyncDuplexStreamingCallOptions(client);
+            ConvaiLogger.DebugLog(
+                $"SendTextData started. CharacterId={SafeCharacterId(characterID)}, TextLength={(userText?.Length ?? 0)}",
+                ConvaiLogger.LogCategory.Character);
 
             GetResponseRequest getResponseConfigRequest = CreateGetResponseRequest(
                 isActionActive,
@@ -210,32 +212,56 @@ namespace Convai.Scripts.Runtime.Core
                 characterID,
                 actionConfig,
                 faceModel,
-                speakerId);
+                speakerId,
+                sendingNPC);
+            GetResponseRequest getResponseDataRequest = new()
+            {
+                GetResponseData = new GetResponseData
+                {
+                    TextData = userText
+                }
+            };
+            GetResponseRequestSingle request = new()
+            {
+                ResponseConfig = getResponseConfigRequest,
+                ResponseData = getResponseDataRequest
+            };
 
             try
             {
-                await call.RequestStream.WriteAsync(getResponseConfigRequest);
-                await call.RequestStream.WriteAsync(new GetResponseRequest
-                {
-                    GetResponseData = new GetResponseData
-                    {
-                        TextData = userText
-                    }
-                });
-                await call.RequestStream.CompleteAsync();
+                AsyncServerStreamingCall<GetResponseResponse> call = GetAsyncServerStreamingCallOptions(client, request);
+                ConvaiLogger.DebugLog(
+                    $"SendTextData single request sent. CharacterId={SafeCharacterId(characterID)}",
+                    ConvaiLogger.LogCategory.Character);
 
                 // Store the task that receives results from the server.
+                using CancellationTokenSource textSendCancellation = new(TimeSpan.FromSeconds(30));
                 Task receiveResultsTask = Task.Run(
-                    async () => { await ReceiveResultFromServer(call, _cancellationTokenSource.Token); },
-                    _cancellationTokenSource.Token);
+                    async () => { await ReceiveResultFromServer(call, textSendCancellation.Token, sendingNPC); },
+                    textSendCancellation.Token);
 
                 // Await the task if needed to ensure it completes before this method returns [OPTIONAL]
                 await receiveResultsTask.ConfigureAwait(false);
+                ConvaiLogger.DebugLog(
+                    $"SendTextData receive task completed. CharacterId={SafeCharacterId(characterID)}",
+                    ConvaiLogger.LogCategory.Character);
+            }
+            catch (OperationCanceledException)
+            {
+                ConvaiLogger.Warn(
+                    $"SendTextData timed out or was cancelled before a Convai response was received. CharacterId={SafeCharacterId(characterID)}",
+                    ConvaiLogger.LogCategory.Character);
             }
             catch (Exception ex)
             {
                 ConvaiLogger.Error(ex, ConvaiLogger.LogCategory.Character);
             }
+        }
+
+        private static string SafeCharacterId(string characterID)
+        {
+            if (string.IsNullOrEmpty(characterID)) return "<empty>";
+            return characterID.Length <= 8 ? characterID : characterID.Substring(0, 8) + "...";
         }
 
         // This method will be called whenever the active NPC changes.
@@ -282,6 +308,7 @@ namespace Convai.Scripts.Runtime.Core
         public async Task StartRecordAudio(ConvaiService.ConvaiServiceClient client, bool isActionActive, bool isLipSyncActive, int recordingFrequency, int recordingLength,
             string characterID, ActionConfig actionConfig, FaceModel faceModel, string speakerID)
         {
+            _currentVoiceTranscriptHandled = false;
             AsyncDuplexStreamingCall<GetResponseRequest, GetResponseResponse> call = GetAsyncDuplexStreamingCallOptions(client);
 
             GetResponseRequest getResponseConfigRequest =
@@ -321,6 +348,20 @@ namespace Convai.Scripts.Runtime.Core
             return client.GetResponse(options);
         }
 
+        private AsyncServerStreamingCall<GetResponseResponse> GetAsyncServerStreamingCallOptions(
+            ConvaiService.ConvaiServiceClient client,
+            GetResponseRequestSingle request)
+        {
+            Metadata headers = new()
+            {
+                { "source", "Unity" },
+                { "version", "3.3.4" }
+            };
+
+            CallOptions options = new(headers);
+            return client.GetResponseSingle(request, options);
+        }
+
         /// <summary>
         ///     Creates a GetResponseRequest object configured with the specified parameters for initiating a gRPC call.
         /// </summary>
@@ -346,29 +387,30 @@ namespace Convai.Scripts.Runtime.Core
                     SpeakerId = speakerID,
                     AudioConfig = new AudioConfig
                     {
-                        SampleRateHertz = recordingFrequency,
+                        SampleRateHertz = recordingFrequency > 0 ? recordingFrequency : 44100,
                         EnableFacialData = isLipSyncActive,
                         FaceModel = faceModel
                     }
                 }
             };
 
-            if (_activeConvaiNPC != null)
+            ConvaiNPC configNpc = npc ?? _activeConvaiNPC;
+            if (configNpc != null)
             {
-                if (_activeConvaiNPC.TryGetComponent(out NarrativeDesignKeyController ndController))
+                if (configNpc.TryGetComponent(out NarrativeDesignKeyController ndController))
                 {
                     foreach (NarrativeDesignKeyController.NarrativeDesignKey templateKey in ndController.narrativeDesignKeys)
                     {
                         getResponseConfigRequest.GetResponseConfig.NarrativeTemplateKeys.Add(templateKey.name, templateKey.value);
                     }
                 }
-                if (_activeConvaiNPC.TryGetComponent(out DynamicInfoController diController))
+                if (configNpc.TryGetComponent(out DynamicInfoController diController))
                 {
                     getResponseConfigRequest.GetResponseConfig.DynamicInfoConfig = diController.DynamicInfoConfig;
                 }
             }
 
-            if (isActionActive || _activeConvaiNPC != null) getResponseConfigRequest.GetResponseConfig.ActionConfig = actionConfig;
+            if (isActionActive || configNpc != null) getResponseConfigRequest.GetResponseConfig.ActionConfig = actionConfig;
 
             return getResponseConfigRequest;
         }
@@ -393,6 +435,11 @@ namespace Convai.Scripts.Runtime.Core
             while (Microphone.IsRecording(MicrophoneManager.Instance.SelectedMicrophoneName))
             {
                 await Task.Delay(200);
+                if (_currentVoiceTranscriptHandled)
+                {
+                    break;
+                }
+
                 int newPos = Microphone.GetPosition(MicrophoneManager.Instance.SelectedMicrophoneName);
                 int diff = newPos - pos;
 
@@ -422,17 +469,32 @@ namespace Convai.Scripts.Runtime.Core
                     }
 
                     audioClip.GetData(audioData, pos);
-                    await ProcessAudioChunk(call, diff, audioData);
+                    if (!await ProcessAudioChunk(call, diff, audioData))
+                    {
+                        break;
+                    }
+
                     pos = newPos;
                 }
             }
 
             // Process any remaining audio data.
-            await ProcessAudioChunk(call,
-                Microphone.GetPosition(MicrophoneManager.Instance.SelectedMicrophoneName) - pos,
-                audioData).ConfigureAwait(false);
+            if (!_currentVoiceTranscriptHandled)
+            {
+                await ProcessAudioChunk(call,
+                    Microphone.GetPosition(MicrophoneManager.Instance.SelectedMicrophoneName) - pos,
+                    audioData).ConfigureAwait(false);
+            }
 
-            await call.RequestStream.CompleteAsync();
+            try
+            {
+                await call.RequestStream.CompleteAsync();
+            }
+            catch (RpcException rpcException) when (IsRecoverableClosedStream(rpcException))
+            {
+                ConvaiLogger.Warn($"Voice stream already closed while completing microphone upload: {rpcException.Status.Detail}",
+                    ConvaiLogger.LogCategory.Character);
+            }
         }
 
         /// <summary>
@@ -461,7 +523,7 @@ namespace Convai.Scripts.Runtime.Core
         /// <param name="call">gRPC Streaming call connecting to the getResponse function</param>
         /// <param name="diff">Length of the audio data from the current position to the position of the last sent chunk</param>
         /// <param name="audioData">Chunk of audio data that we want to be processed</param>
-        private static async Task ProcessAudioChunk(AsyncDuplexStreamingCall<GetResponseRequest, GetResponseResponse> call, int diff, IReadOnlyList<float> audioData)
+        private static async Task<bool> ProcessAudioChunk(AsyncDuplexStreamingCall<GetResponseRequest, GetResponseResponse> call, int diff, IReadOnlyList<float> audioData)
         {
             if (diff > 0)
             {
@@ -493,8 +555,9 @@ namespace Convai.Scripts.Runtime.Core
                     switch (rpcException.StatusCode)
                     {
                         case StatusCode.Cancelled:
-                            ConvaiLogger.Error(rpcException, ConvaiLogger.LogCategory.Character);
-                            break;
+                            ConvaiLogger.Warn($"Voice stream was cancelled while sending microphone audio: {rpcException.Status.Detail}",
+                                ConvaiLogger.LogCategory.Character);
+                            return false;
                         case StatusCode.PermissionDenied:
                             {
                                 if (NotificationSystemHandler.Instance != null && !_usageLimitNotificationSent)
@@ -503,8 +566,16 @@ namespace Convai.Scripts.Runtime.Core
                                     _usageLimitNotificationSent = true;
                                 }
 
-                                break;
+                                return false;
                             }
+                        case StatusCode.Internal when IsRecoverableClosedStream(rpcException):
+                            ConvaiLogger.Warn($"Voice stream was closed by the server while sending microphone audio: {rpcException.Status.Detail}",
+                                ConvaiLogger.LogCategory.Character);
+                            return false;
+                        case StatusCode.Unavailable:
+                            ConvaiLogger.Warn($"Voice stream unavailable while sending microphone audio: {rpcException.Status.Detail}",
+                                ConvaiLogger.LogCategory.Character);
+                            return false;
                         default:
                             throw;
                     }
@@ -512,8 +583,23 @@ namespace Convai.Scripts.Runtime.Core
                 catch (Exception ex)
                 {
                     ConvaiLogger.Error(ex, ConvaiLogger.LogCategory.Character);
+                    return false;
                 }
             }
+
+            return true;
+        }
+
+        private static bool IsRecoverableClosedStream(RpcException rpcException)
+        {
+            string detail = rpcException?.Status.Detail ?? string.Empty;
+            return rpcException != null &&
+                   (rpcException.StatusCode == StatusCode.Cancelled ||
+                    rpcException.StatusCode == StatusCode.Internal ||
+                    rpcException.StatusCode == StatusCode.Unavailable) &&
+                   (detail.IndexOf("Stream removed", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    detail.IndexOf("stream already closed", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    detail.IndexOf("failed to connect to all addresses", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         /// <summary>
@@ -569,12 +655,21 @@ namespace Convai.Scripts.Runtime.Core
         {
             Queue<LipSyncBlendFrameData> lipSyncBlendFrameQueue = new();
             bool firstSilFound = false;
+            bool receivedAnyResult = false;
             if (npc != null) npc.isCharacterActive = true;
             while (!cancellationToken.IsCancellationRequested && await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
                 try
                 {
 
                     GetResponseResponse result = call.ResponseStream.Current;
+                    if (!receivedAnyResult)
+                    {
+                        ConvaiNPC targetNpc = NPCToSendResponse(npc);
+                        ConvaiLogger.DebugLog(
+                            $"First Convai response received. TargetNPC={targetNpc?.characterName ?? "<none>"}, HasAudio={result.AudioResponse != null}, HasUserQuery={result.UserQuery != null}, HasDebug={result.DebugLog != null}",
+                            ConvaiLogger.LogCategory.Character);
+                        receivedAnyResult = true;
+                    }
 
                     // // Log response details for debugging only if text or audio data is present and audio data length is greater than 46 bytes. Also print sample rate hertz
                     // // if ((result.AudioResponse != null || result.UserQuery != null) && result.AudioResponse?.AudioData?.Length > 46)
@@ -616,6 +711,70 @@ namespace Convai.Scripts.Runtime.Core
 
             if (cancellationToken.IsCancellationRequested)
                 await call.RequestStream.CompleteAsync();
+
+            if (!receivedAnyResult && !cancellationToken.IsCancellationRequested)
+            {
+                ConvaiNPC targetNpc = NPCToSendResponse(npc);
+                ConvaiLogger.Warn(
+                    $"Convai response stream completed without data. TargetNPC={targetNpc?.characterName ?? "<none>"}",
+                    ConvaiLogger.LogCategory.Character);
+            }
+        }
+
+        private async Task ReceiveResultFromServer(AsyncServerStreamingCall<GetResponseResponse> call, CancellationToken cancellationToken,
+            ConvaiNPC npc = null)
+        {
+            Queue<LipSyncBlendFrameData> lipSyncBlendFrameQueue = new();
+            bool firstSilFound = false;
+            bool receivedAnyResult = false;
+            if (npc != null) npc.isCharacterActive = true;
+
+            while (!cancellationToken.IsCancellationRequested && await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
+                try
+                {
+                    GetResponseResponse result = call.ResponseStream.Current;
+                    if (!receivedAnyResult)
+                    {
+                        ConvaiNPC targetNpc = NPCToSendResponse(npc);
+                        ConvaiLogger.DebugLog(
+                            $"First Convai response received. TargetNPC={targetNpc?.characterName ?? "<none>"}, HasAudio={result.AudioResponse != null}, HasUserQuery={result.UserQuery != null}, HasDebug={result.DebugLog != null}",
+                            ConvaiLogger.LogCategory.Character);
+                        receivedAnyResult = true;
+                    }
+
+                    OnResultReceived?.Invoke(result);
+                    ProcessCharacterEmotion(result, npc);
+                    ProcessUserQuery(result);
+                    if (!_suppressCurrentVoiceResponse)
+                    {
+                        ProcessBtResponse(result, npc);
+                        ProcessActionResponse(result, npc);
+                        ProcessAudioResponse(result, lipSyncBlendFrameQueue, ref firstSilFound, npc);
+                    }
+
+                    if (result.AudioResponse != null && result.AudioResponse.EndOfResponse)
+                    {
+                        _suppressCurrentVoiceResponse = false;
+                    }
+
+                    UpdateSessionId(result, npc);
+                }
+                catch (RpcException rpcException) when (rpcException.StatusCode == StatusCode.Cancelled)
+                {
+                    ConvaiLogger.Error(rpcException, ConvaiLogger.LogCategory.Character);
+                }
+                catch (Exception ex)
+                {
+                    ConvaiLogger.DebugLog(ex, ConvaiLogger.LogCategory.Character);
+                }
+
+            if (!receivedAnyResult && !cancellationToken.IsCancellationRequested)
+            {
+                ConvaiNPC targetNpc = NPCToSendResponse(npc);
+                ConvaiLogger.Warn(
+                    $"Convai response stream completed without data. TargetNPC={targetNpc?.characterName ?? "<none>"}",
+                    ConvaiLogger.LogCategory.Character);
+            }
         }
 
         private ConvaiNPC NPCToSendResponse(ConvaiNPC npc)
@@ -645,6 +804,7 @@ namespace Convai.Scripts.Runtime.Core
                     if (!string.IsNullOrWhiteSpace(finalTranscript) &&
                         TryHandleUserVoiceTranscript?.Invoke(finalTranscript) == true)
                     {
+                        _currentVoiceTranscriptHandled = true;
                         _suppressCurrentVoiceResponse = true;
                     }
 

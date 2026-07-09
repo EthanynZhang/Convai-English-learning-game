@@ -1,14 +1,14 @@
 {
   "dependencies": {
     "com.gamebooom.unity.mcp": {
-      "version": "https://github.com/FunplayAI/funplay-unity-mcp.git#v0.4.9",
+      "version": "https://github.com/FunplayAI/funplay-unity-mcp.git#v0.5.0",
       "depth": 0,
       "source": "git",
       "dependencies": {
         "com.unity.nuget.newtonsoft-json": "3.2.1",
         "com.unity.inputsystem": "1.7.0"
       },
-      "hash": "b47f21f74bf5abcf18fd15ce65ac35b2dd762eba"
+      "hash": "b2eca5522bbc1bc3f7185c157ee7795dd2db5c62"
     },
     "com.unity.2d.sprite": {
       "version": "1.0.0",

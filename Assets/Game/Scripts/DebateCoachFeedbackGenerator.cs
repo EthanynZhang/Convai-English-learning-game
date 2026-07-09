@@ -257,6 +257,8 @@ namespace Game.Debate
 
             if (request.result != UnityWebRequest.Result.Success)
             {
+                Debug.LogWarning(
+                    $"Debate coach feedback request failed. endpoint={endpoint}, result={request.result}, status={request.responseCode}, error={request.error}, body={TrimForLog(request.downloadHandler?.text)}");
                 yield break;
             }
 
@@ -265,6 +267,21 @@ namespace Game.Debate
             {
                 onComplete?.Invoke(parsed);
             }
+            else
+            {
+                Debug.LogWarning("Debate coach feedback response could not be parsed. body=" + TrimForLog(request.downloadHandler.text));
+            }
+        }
+
+        private static string TrimForLog(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            string compact = value.Replace("\r", " ").Replace("\n", " ").Trim();
+            return compact.Length <= 600 ? compact : compact.Substring(0, 600) + "...";
         }
 
         private static CoachFeedbackResult TryParseOpenAIResponse(string responseJson)

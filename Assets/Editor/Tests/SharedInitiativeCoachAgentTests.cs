@@ -154,6 +154,31 @@ namespace Game.Tests.EditMode
             StringAssert.Contains("DebateCoachLogger", source);
             StringAssert.Contains("OnDisable()", source);
             StringAssert.Contains("UnregisterVoiceInterceptor();", source);
+            StringAssert.Contains("RegisterConvaiInputSuppressors();", source);
+            StringAssert.Contains("ShouldSuppressCoachTalkInput", source);
+            StringAssert.Contains("ShouldSuppressAutoActiveNpcUpdate", source);
+        }
+
+        [Test]
+        public void CoachVoiceUsesCoachNpcAndEndSessionRequestsImmediateFeedback()
+        {
+            string source = File.ReadAllText(
+                Path.Combine(GetAssetsPath(), "Game/Scripts/SharedInitiativeOrchestrationController.cs"));
+
+            StringAssert.Contains("ConvaiNPCManager.Instance?.SetActiveConvaiNPC(coachNPC);", source);
+            StringAssert.DoesNotContain(
+                "ConvaiNPCManager.Instance?.SetActiveConvaiNPC(conversationNPC);\r\n\r\n            CoachFeedbackRequest request = BuildCoachRequest(level);",
+                source);
+            StringAssert.DoesNotContain(
+                "ConvaiNPCManager.Instance?.SetActiveConvaiNPC(conversationNPC);\n\n            CoachFeedbackRequest request = BuildCoachRequest(level);",
+                source);
+            StringAssert.DoesNotContain("SendTextDataAsSoloSpeech", source);
+            StringAssert.Contains("StartCoachFeedbackRequest(CoachFeedbackLevel.Summary, false);", source);
+            StringAssert.DoesNotContain("StartCoachFeedbackSpeech(closingText);", source);
+            StringAssert.Contains("_coachRequestVersion", source);
+            StringAssert.Contains("requestVersion != _coachRequestVersion", source);
+            StringAssert.Contains("coachVoicePitch = 0.92f", source);
+            StringAssert.Contains("warm, gentle", source);
         }
 
         [Test]

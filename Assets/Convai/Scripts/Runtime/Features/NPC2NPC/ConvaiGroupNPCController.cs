@@ -157,8 +157,22 @@ namespace Convai.Scripts.Runtime.Features
             }
         }
 
+        public void SendTextDataAsSoloSpeech(string message)
+        {
+            ConvaiLogger.DebugLog($"Starting solo NPC speech for {CharacterName}. TextLength={(message?.Length ?? 0)}", ConvaiLogger.LogCategory.Character);
+            SuppressNextEndOfResponseRelay = true;
+            SendTextDataNPC2NPC(message);
+        }
+
         public void EndOfResponseReceived()
         {
+            if (SuppressNextEndOfResponseRelay)
+            {
+                SuppressNextEndOfResponseRelay = false;
+                _finalResponseText = "";
+                return;
+            }
+
             if (TryGetComponent(out ConvaiNPCAudioManager convaiNPCAudio)) convaiNPCAudio.OnCharacterTalkingChanged += SendFinalTranscriptToOtherNPC;
             ConversationManager.RelayMessage(_finalResponseText, this);
             _finalResponseText = "";
@@ -232,6 +246,7 @@ namespace Convai.Scripts.Runtime.Features
         #region Public Attributes
 
         public bool CanRelayMessage { get; set; } = true;
+        public bool SuppressNextEndOfResponseRelay { get; private set; }
         public NPC2NPCConversationManager ConversationManager { get; set; }
         public bool IsInConversationWithAnotherNPC { get; set; }
         public string CharacterName => ConvaiNPC == null ? string.Empty : ConvaiNPC.characterName;

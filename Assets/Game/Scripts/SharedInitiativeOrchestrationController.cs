@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using Convai.Scripts.Runtime.Core;
@@ -78,6 +79,12 @@ namespace Game.Debate
         [SerializeField] private string openAIBaseUrl = "https://api.meding.site";
         [SerializeField] private string openAIApiKeyOverride = "";
         [SerializeField] private float coachResponseTimeoutSeconds = 10f;
+        [SerializeField] private bool useWindowsTtsFallbackWhenConvaiSilent = true;
+        [SerializeField] private float convaiSpeechFallbackDelaySeconds = 5f;
+        [SerializeField] [Range(0.75f, 1.05f)] private float coachVoicePitch = 0.92f;
+        [SerializeField]
+        private string coachSpeechStyleInstruction =
+            "Use a warm, gentle, supportive adult female coaching voice. Speak calmly and softly.";
 
         [Header("UI")]
         [SerializeField] private Canvas uiCanvas;
@@ -108,8 +115,11 @@ namespace Game.Debate
         private Button _exampleButton;
         private Button _endButton;
         private Coroutine _coachRoutine;
+        private Coroutine _coachSpeechGuardRoutine;
         private int _turnIndex;
+        private int _coachRequestVersion;
         private bool _exampleRequestedForCurrentTurn;
+        private bool _coachFeedbackSpeechActive;
         private string _latestPlayerUtterance = string.Empty;
         private string _latestFeedbackText = string.Empty;
 
@@ -122,11 +132,13 @@ namespace Game.Debate
         private void OnEnable()
         {
             RegisterVoiceInterceptor();
+            RegisterConvaiInputSuppressors();
         }
 
         private void OnDisable()
         {
             UnregisterVoiceInterceptor();
+            UnregisterConvaiInputSuppressors();
         }
 
         private IEnumerator Start()
@@ -152,6 +164,7 @@ namespace Game.Debate
 
             SubscribeToConversationAudio();
             RegisterVoiceInterceptor();
+            RegisterConvaiInputSuppressors();
 
             yield return null;
             EnterIntro();
@@ -165,7 +178,9 @@ namespace Game.Debate
                 _coachRoutine = null;
             }
 
+            StopCoachFeedbackSpeech(false);
             UnregisterVoiceInterceptor();
+            UnregisterConvaiInputSuppressors();
             UnsubscribeFromConversationAudio();
             SetControlCursor(false);
         }
@@ -222,11 +237,12 @@ namespace Game.Debate
                 return;
             }
 
+            StopCoachFeedbackSpeech(true);
             FlushPendingFeedbackRows(DateTime.UtcNow.ToString("o"));
 
             if (_turnIndex >= maxConversationTurns)
             {
-                StartCoroutine(RequestCoachFeedback(CoachFeedbackLevel.Summary, false));
+                StartCoachFeedbackRequest(CoachFeedbackLevel.Summary, false);
                 return;
             }
 
@@ -242,8 +258,9 @@ namespace Game.Debate
                 return;
             }
 
+            StopCoachFeedbackSpeech(true);
             _exampleRequestedForCurrentTurn = true;
-            StartCoroutine(RequestCoachFeedback(CoachFeedbackLevel.Level3, true));
+            StartCoachFeedbackRequest(CoachFeedbackLevel.Level3, true);
         }
 
         public void AskCoachAgain()
@@ -253,13 +270,13 @@ namespace Game.Debate
 
         public void EndConditionC()
         {
+            StopCoachFeedbackSpeech(false);
             FlushPendingFeedbackRows(string.Empty);
-            Phase = OrchestrationPhase.Complete;
-            ConvaiNPCManager.Instance?.SetActiveConvaiNPC(coachNPC != null ? coachNPC : conversationNPC);
+            ConvaiNPCManager.Instance?.SetActiveConvaiNPC(coachNPC);
             SetControlCursor(true);
-            SetStatus(closingText);
-            _coachText.text = "Session complete.";
-            SetButtonsForPhase();
+            SetStatus("Coach is preparing final feedback...");
+            _coachText.text = "Coach is preparing final feedback...";
+            StartCoachFeedbackRequest(CoachFeedbackLevel.Summary, false);
         }
 
         public void AdvanceFormalDebate()
@@ -315,7 +332,7 @@ namespace Game.Debate
 
             SessionRecord.latestOpponentUtterance = _opponentTranscript.ToString().Trim();
             Phase = OrchestrationPhase.WaitingForPlayer;
-            Debug.Log("SharedInitiativeOrchestrationController accepted player voice while the opponent-speaking phase was still active.");
+            UnityEngine.Debug.Log("SharedInitiativeOrchestrationController accepted player voice while the opponent-speaking phase was still active.");
         }
 
         private void HandlePlayerUtterance(string transcript, bool fromTypedFallback)
@@ -327,10 +344,22 @@ namespace Game.Debate
             _playerText.text = "You: " + _latestPlayerUtterance;
             transcriptBridge?.PublishPlayerUtterance(_latestPlayerUtterance);
             SetStatus(fromTypedFallback ? "Coach is reading your typed note..." : "Voice captured. Coach is preparing feedback...");
-            StartCoroutine(RequestCoachFeedback(CoachFeedbackLevel.Level2, false));
+            StartCoachFeedbackRequest(CoachFeedbackLevel.Level2, false);
         }
 
-        private IEnumerator RequestCoachFeedback(CoachFeedbackLevel level, bool exampleRequested)
+        private void StartCoachFeedbackRequest(CoachFeedbackLevel level, bool exampleRequested)
+        {
+            _coachRequestVersion++;
+            if (_coachRoutine != null)
+            {
+                StopCoroutine(_coachRoutine);
+                _coachRoutine = null;
+            }
+
+            _coachRoutine = StartCoroutine(RequestCoachFeedback(level, exampleRequested, _coachRequestVersion));
+        }
+
+        private IEnumerator RequestCoachFeedback(CoachFeedbackLevel level, bool exampleRequested, int requestVersion)
         {
             Phase = OrchestrationPhase.CoachGenerating;
             SetControlCursor(true);
@@ -352,8 +381,14 @@ namespace Game.Debate
                     openAIApiKeyOverride))
                 .GenerateFeedback(request, feedback => result = feedback);
 
+            if (requestVersion != _coachRequestVersion)
+            {
+                yield break;
+            }
+
             result ??= DebateCoachFeedbackGenerator.BuildLocalFallback(request);
             ApplyCoachFeedback(request, result, exampleRequested);
+            _coachRoutine = null;
         }
 
         private void ApplyCoachFeedback(CoachFeedbackRequest request, CoachFeedbackResult result, bool exampleRequested)
@@ -388,10 +423,149 @@ namespace Game.Debate
 
             if (speakCoachFeedback && coachNPC != null)
             {
-                coachNPC.SendTextDataAsync(DebateLearningContent.GetRepeatExactlyPrompt(feedback));
+                StartCoachFeedbackSpeech(feedback);
             }
 
             SetButtonsForPhase();
+        }
+
+        private void StartCoachFeedbackSpeech(string feedback)
+        {
+            if (coachNPC == null || string.IsNullOrWhiteSpace(feedback))
+            {
+                return;
+            }
+
+            StopCoachFeedbackSpeech(false);
+            _coachFeedbackSpeechActive = true;
+            ConvaiNPCManager.Instance?.SetActiveConvaiNPC(coachNPC);
+            ApplyCoachVoiceSettings();
+            coachNPC.SendTextDataAsync(BuildCoachSpeechPrompt(feedback));
+
+            _coachSpeechGuardRoutine = StartCoroutine(GuardCoachFeedbackSpeech(feedback));
+        }
+
+        private void ApplyCoachVoiceSettings()
+        {
+            if (coachNPC != null && coachNPC.TryGetComponent(out AudioSource coachAudioSource))
+            {
+                coachAudioSource.pitch = Mathf.Clamp(coachVoicePitch, 0.75f, 1.05f);
+            }
+        }
+
+        private string BuildCoachSpeechPrompt(string feedback)
+        {
+            string safeFeedback = feedback?.Trim() ?? string.Empty;
+            string style = string.IsNullOrWhiteSpace(coachSpeechStyleInstruction)
+                ? "Use a warm, gentle coaching voice."
+                : coachSpeechStyleInstruction.Trim();
+
+            return style + " " +
+                   "Do not answer, explain, or add anything beyond the feedback. " +
+                   "Say only the exact feedback inside the brackets. " +
+                   $"Feedback: [{safeFeedback}]";
+        }
+
+        private IEnumerator GuardCoachFeedbackSpeech(string feedback)
+        {
+            float startTime = Time.realtimeSinceStartup;
+            float timeoutSeconds = Mathf.Max(8f, coachResponseTimeoutSeconds + 8f);
+            bool sawAudioOrTalking = false;
+            bool launchedFallback = false;
+
+            while (coachNPC != null && Time.realtimeSinceStartup - startTime < timeoutSeconds)
+            {
+                int queuedAudio = coachNPC.GetAudioResponseCount();
+                bool isTalking = coachNPC.IsCharacterTalking;
+                sawAudioOrTalking |= queuedAudio > 0 || isTalking;
+
+                if (!sawAudioOrTalking &&
+                    !launchedFallback &&
+                    useWindowsTtsFallbackWhenConvaiSilent &&
+                    Time.realtimeSinceStartup - startTime >= Mathf.Max(1f, convaiSpeechFallbackDelaySeconds))
+                {
+                    launchedFallback = true;
+                    SpeakWithWindowsTts(feedback);
+                }
+
+                if (sawAudioOrTalking && !isTalking && queuedAudio == 0 && Time.realtimeSinceStartup - startTime > 0.5f)
+                {
+                    break;
+                }
+
+                yield return new WaitForSecondsRealtime(0.1f);
+            }
+
+            if (!sawAudioOrTalking)
+            {
+                UnityEngine.Debug.LogWarning("Coach feedback text was generated, but no Convai audio was observed before fallback/timeout.");
+            }
+
+            _coachFeedbackSpeechActive = false;
+            _coachSpeechGuardRoutine = null;
+
+            if (Phase == OrchestrationPhase.CoachSuggestionReady ||
+                Phase == OrchestrationPhase.CoachGenerating)
+            {
+                ConvaiNPCManager.Instance?.SetActiveConvaiNPC(conversationNPC);
+            }
+        }
+
+        private static void SpeakWithWindowsTts(string text)
+        {
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return;
+            }
+
+            try
+            {
+                string escapedText = text.Replace("'", "''");
+                string command =
+                    "Add-Type -AssemblyName System.Speech; " +
+                    "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
+                    "$s.Rate = 0; $s.Volume = 100; " +
+                    "$s.Speak('" + escapedText + "');";
+                string encodedCommand = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
+                ProcessStartInfo startInfo = new()
+                {
+                    FileName = "powershell.exe",
+                    Arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand " + encodedCommand,
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                };
+                Process.Start(startInfo);
+                UnityEngine.Debug.Log("Started Windows TTS fallback for Coach feedback.");
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning("Windows TTS fallback failed: " + ex.Message);
+            }
+#else
+            _ = text;
+#endif
+        }
+
+        private void StopCoachFeedbackSpeech(bool restoreConversationNpc)
+        {
+            if (_coachSpeechGuardRoutine != null)
+            {
+                StopCoroutine(_coachSpeechGuardRoutine);
+                _coachSpeechGuardRoutine = null;
+            }
+
+            _coachFeedbackSpeechActive = false;
+
+            if (coachNPC != null)
+            {
+                coachNPC.InterruptCharacterSpeech();
+            }
+
+            if (restoreConversationNpc)
+            {
+                ConvaiNPCManager.Instance?.SetActiveConvaiNPC(conversationNPC);
+            }
         }
 
         private CoachFeedbackRequest BuildCoachRequest(CoachFeedbackLevel level)
@@ -528,12 +702,60 @@ namespace Game.Debate
             ConvaiGRPCAPI.TryHandleUserVoiceTranscript = TryHandlePlayerVoiceTranscript;
         }
 
+        private void RegisterConvaiInputSuppressors()
+        {
+            if (!Application.isPlaying)
+            {
+                return;
+            }
+
+            ConvaiInputManager.ShouldSuppressTalkInput = ShouldSuppressCoachTalkInput;
+            ConvaiPlayerInteractionManager.ShouldSuppressTalkInput = ShouldSuppressCoachTalkInput;
+            ConvaiPlayerInteractionManager.ShouldSuppressNpcInteraction = ShouldSuppressCoachTalkInput;
+            ConvaiNPCManager.ShouldSuppressAutoActiveNPCUpdate = ShouldSuppressAutoActiveNpcUpdate;
+        }
+
         private void UnregisterVoiceInterceptor()
         {
             if (ConvaiGRPCAPI.TryHandleUserVoiceTranscript == (Func<string, bool>)TryHandlePlayerVoiceTranscript)
             {
                 ConvaiGRPCAPI.TryHandleUserVoiceTranscript = null;
             }
+        }
+
+        private void UnregisterConvaiInputSuppressors()
+        {
+            if (ConvaiInputManager.ShouldSuppressTalkInput == (Func<bool>)ShouldSuppressCoachTalkInput)
+            {
+                ConvaiInputManager.ShouldSuppressTalkInput = null;
+            }
+
+            if (ConvaiPlayerInteractionManager.ShouldSuppressTalkInput == (Func<bool>)ShouldSuppressCoachTalkInput)
+            {
+                ConvaiPlayerInteractionManager.ShouldSuppressTalkInput = null;
+            }
+
+            if (ConvaiPlayerInteractionManager.ShouldSuppressNpcInteraction == (Func<bool>)ShouldSuppressCoachTalkInput)
+            {
+                ConvaiPlayerInteractionManager.ShouldSuppressNpcInteraction = null;
+            }
+
+            if (ConvaiNPCManager.ShouldSuppressAutoActiveNPCUpdate == (Func<bool>)ShouldSuppressAutoActiveNpcUpdate)
+            {
+                ConvaiNPCManager.ShouldSuppressAutoActiveNPCUpdate = null;
+            }
+        }
+
+        private bool ShouldSuppressCoachTalkInput()
+        {
+            return Phase == OrchestrationPhase.CoachGenerating ||
+                   Phase == OrchestrationPhase.CoachSuggestionReady ||
+                   _coachFeedbackSpeechActive;
+        }
+
+        private bool ShouldSuppressAutoActiveNpcUpdate()
+        {
+            return _coachFeedbackSpeechActive;
         }
 
         private void EnterIntro()

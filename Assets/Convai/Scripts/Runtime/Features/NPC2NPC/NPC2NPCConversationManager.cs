@@ -233,7 +233,8 @@ namespace Convai.Scripts.Runtime.Features
                 SslCredentials credentials = new();
                 List<ChannelOption> options = new()
                 {
-                    new ChannelOption(ChannelOptions.MaxReceiveMessageLength, 16 * 1024 * 1024)
+                    new ChannelOption(ChannelOptions.MaxReceiveMessageLength, 16 * 1024 * 1024),
+                    new ChannelOption("grpc.enable_http_proxy", 0)
                 };
                 Channel channel = new(GRPC_API_ENDPOINT, credentials, options);
                 return new ConvaiService.ConvaiServiceClient(channel);

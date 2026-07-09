@@ -23,6 +23,7 @@ namespace Convai.Scripts.Runtime.Core
 
         [Tooltip("Reference to the NPC that is currently near the player.")] [ReadOnly]
         public ConvaiNPC nearbyNPC;
+        public static Func<bool> ShouldSuppressAutoActiveNPCUpdate;
 
         // Cache used to store NPC references and avoid redundant GetComponent calls.
         private readonly Dictionary<GameObject, ConvaiNPC> _convaiNPCCache = new();
@@ -49,6 +50,11 @@ namespace Convai.Scripts.Runtime.Core
 
         private void LateUpdate()
         {
+            if (ShouldSuppressAutoActiveNPCUpdate?.Invoke() == true)
+            {
+                return;
+            }
+
             Ray ray = new(_mainCamera.transform.position, _mainCamera.transform.forward);
             bool foundConvaiNPC = false;
 

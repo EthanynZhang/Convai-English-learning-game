@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "com.gamebooom.unity.mcp": "https://github.com/FunplayAI/funplay-unity-mcp.git#v0.4.9",
+    "com.gamebooom.unity.mcp": "https://github.com/FunplayAI/funplay-unity-mcp.git#v0.5.0",
     "com.unity.2d.sprite": "1.0.0",
     "com.unity.ai.navigation": "2.0.12",
     "com.unity.animation.rigging": "1.4.1",

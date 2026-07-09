@@ -1405,6 +1405,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.NpcDebateRoundManager
   startOnPlay: 0
   roundDurationSeconds: 180
+  useRoundTimer: 1
   openingCaptionSeconds: 2.5
   closingCaptionSeconds: 5
   endConversationWhenTimeExpires: 1
@@ -1419,6 +1420,7 @@ MonoBehaviour:
   refereePresentation: {fileID: 4100100004}
   startButton: {fileID: 597471346}
   unlockCursorBeforeStart: 1
+  waitForExternalStart: 0
   timerText: {fileID: 1186777323}
   timerPrefix: 'Time Left '
   conversationManager: {fileID: 1297513123}
@@ -1459,8 +1461,21 @@ MonoBehaviour:
   secondNPC: {fileID: 1102249285}
   debateTopic: Reading and speaking, which is more important in learning English?
   statusText: {fileID: 1238232171}
+  transcriptBridge: {fileID: 0}
   waitingText: Waiting for an NPC response...
   unlockCursorWhilePaused: 1
+  enableNaturalLanguageCommands: 1
+  useConvaiVoiceCommandInput: 1
+  showTypedCommandPanel: 0
+  disableTalkDurationLimit: 1
+  participantId: PILOT
+  condition: interactive_npc
+  topicId: reading_vs_speaking
+  commandStage: interactive_rewrite
+  openAIModel: gpt-4o-mini
+  openAIBaseUrl: https://api.meding.site
+  openAIApiKeyOverride:
+  commandParserTimeoutSeconds: 10
 --- !u!1 &911880685
 GameObject:
   m_ObjectHideFlags: 0
@@ -3337,6 +3352,63 @@ MonoBehaviour:
   m_hasFontAssetChanged: 0
   m_baseMaterial: {fileID: 0}
   m_maskOffset: {x: 0, y: 0, z: 0, w: 0}
+--- !u!1001 &1838098644
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7725639381635511316, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
+      propertyPath: m_Name
+      value: Convai Interactables Data
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
 --- !u!1 &1910847927
 GameObject:
   m_ObjectHideFlags: 0
@@ -5821,3 +5893,4 @@ SceneRoots:
   - {fileID: 636640072}
   - {fileID: 86587541}
   - {fileID: 763742167}
+  - {fileID: 1838098644}
