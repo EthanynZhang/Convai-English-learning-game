@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 
 namespace Game.Debate
 {
@@ -16,6 +17,13 @@ namespace Game.Debate
         public bool MicroPractice1FeedbackShown { get; private set; }
         public string MicroPractice2TemplateChoice { get; private set; } = string.Empty;
         public string MicroPractice2ShortText { get; private set; } = string.Empty;
+        public string MicroPractice2Claim { get; private set; } = string.Empty;
+        public string MicroPractice2Reason { get; private set; } = string.Empty;
+        public string MicroPractice2Evidence { get; private set; } = string.Empty;
+        public string MicroPractice2Explanation { get; private set; } = string.Empty;
+        public string MicroPractice2Impact { get; private set; } = string.Empty;
+        public bool MicroPractice2Completed { get; private set; }
+        public int MicroPractice2RerecordCount { get; private set; }
         public string MicroPractice3Strategy { get; private set; } = string.Empty;
         public string MicroPractice3TemplateChoice { get; private set; } = string.Empty;
         public string MicroPractice3ShortText { get; private set; } = string.Empty;
@@ -80,6 +88,47 @@ namespace Game.Debate
             MicroPractice2ShortText = shortText ?? string.Empty;
         }
 
+        public void RecordMicroPractice2ConfirmedPart(CreeiPartKey part, string transcript)
+        {
+            string safeTranscript = transcript?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(safeTranscript))
+            {
+                return;
+            }
+
+            MicroPractice2TemplateChoice = "CREEI_voice_5_step";
+            switch (part)
+            {
+                case CreeiPartKey.Claim:
+                    MicroPractice2Claim = safeTranscript;
+                    break;
+                case CreeiPartKey.Reason:
+                    MicroPractice2Reason = safeTranscript;
+                    break;
+                case CreeiPartKey.Evidence:
+                    MicroPractice2Evidence = safeTranscript;
+                    break;
+                case CreeiPartKey.Explanation:
+                    MicroPractice2Explanation = safeTranscript;
+                    break;
+                case CreeiPartKey.Impact:
+                    MicroPractice2Impact = safeTranscript;
+                    break;
+            }
+
+            MicroPractice2ShortText = BuildMicroPractice2Aggregate();
+            MicroPractice2Completed = !string.IsNullOrWhiteSpace(MicroPractice2Claim) &&
+                                    !string.IsNullOrWhiteSpace(MicroPractice2Reason) &&
+                                    !string.IsNullOrWhiteSpace(MicroPractice2Evidence) &&
+                                    !string.IsNullOrWhiteSpace(MicroPractice2Explanation) &&
+                                    !string.IsNullOrWhiteSpace(MicroPractice2Impact);
+        }
+
+        public void RecordMicroPractice2Rerecord()
+        {
+            MicroPractice2RerecordCount++;
+        }
+
         public void RecordMicroPractice3(string strategy, string templateChoice, string shortText)
         {
             MicroPractice3Strategy = strategy ?? string.Empty;
@@ -127,6 +176,23 @@ namespace Game.Debate
             }
 
             StrategyVersionViewed += ";" + strategy;
+        }
+
+        private string BuildMicroPractice2Aggregate()
+        {
+            return string.Join("\n", new[]
+            {
+                FormatConfirmedPart("Claim", MicroPractice2Claim),
+                FormatConfirmedPart("Reason", MicroPractice2Reason),
+                FormatConfirmedPart("Evidence", MicroPractice2Evidence),
+                FormatConfirmedPart("Explanation", MicroPractice2Explanation),
+                FormatConfirmedPart("Impact", MicroPractice2Impact)
+            }.Where(value => !string.IsNullOrEmpty(value)));
+        }
+
+        private static string FormatConfirmedPart(string label, string transcript)
+        {
+            return string.IsNullOrWhiteSpace(transcript) ? string.Empty : label + ": " + transcript;
         }
     }
 }

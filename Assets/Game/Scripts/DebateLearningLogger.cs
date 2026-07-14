@@ -11,7 +11,7 @@ namespace Game.Debate
         public const string FileName = "debate_learning_logs.csv";
 
         private const string Header =
-            "participant_id,condition,stage,timestamp,card_view_time,demo_view_time,natural_view_time,structure_view_time,strategy_version_viewed,micro_choice_strategy,optional_bad_example_viewed,rewatch_count,total_learning_phase_time,micro_practice_1_choice,micro_practice_1_correct,micro_practice_1_feedback_shown,micro_practice_2_template_choice,micro_practice_2_short_text,micro_practice_3_strategy,micro_practice_3_template_choice,micro_practice_3_short_text,micro_choice_rationale_type,micro_choice_rationale_text,micro_practice_total_time";
+            "participant_id,condition,stage,timestamp,card_view_time,demo_view_time,natural_view_time,structure_view_time,strategy_version_viewed,micro_choice_strategy,optional_bad_example_viewed,rewatch_count,total_learning_phase_time,micro_practice_1_choice,micro_practice_1_correct,micro_practice_1_feedback_shown,micro_practice_2_template_choice,micro_practice_2_short_text,micro_practice_3_strategy,micro_practice_3_template_choice,micro_practice_3_short_text,micro_choice_rationale_type,micro_choice_rationale_text,micro_practice_total_time,micro_practice_2_claim,micro_practice_2_reason,micro_practice_2_evidence,micro_practice_2_explanation,micro_practice_2_impact,micro_practice_2_completed,micro_practice_2_rerecord_count";
 
         private readonly string _path;
 
@@ -80,7 +80,14 @@ namespace Game.Debate
                 safeMetrics.MicroPractice3ShortText,
                 safeMetrics.MicroChoiceRationaleType,
                 safeMetrics.MicroChoiceRationaleText,
-                FormatSeconds(safeMetrics.MicroPracticeTotalTime)
+                FormatSeconds(safeMetrics.MicroPracticeTotalTime),
+                safeMetrics.MicroPractice2Claim,
+                safeMetrics.MicroPractice2Reason,
+                safeMetrics.MicroPractice2Evidence,
+                safeMetrics.MicroPractice2Explanation,
+                safeMetrics.MicroPractice2Impact,
+                safeMetrics.MicroPractice2Completed ? "true" : "false",
+                safeMetrics.MicroPractice2RerecordCount.ToString(CultureInfo.InvariantCulture)
             };
 
             StringBuilder builder = new();
@@ -109,6 +116,18 @@ namespace Game.Debate
             if (!File.Exists(_path) || new FileInfo(_path).Length == 0)
             {
                 File.WriteAllText(_path, Header + Environment.NewLine, Encoding.UTF8);
+                return;
+            }
+
+            string existing = File.ReadAllText(_path, Encoding.UTF8);
+            int firstLineEnd = existing.IndexOf('\n');
+            string existingHeader = firstLineEnd >= 0
+                ? existing.Substring(0, firstLineEnd).TrimEnd('\r')
+                : existing.TrimEnd('\r');
+            if (!existingHeader.Contains("micro_practice_2_claim", StringComparison.Ordinal))
+            {
+                string existingRows = firstLineEnd >= 0 ? existing.Substring(firstLineEnd + 1) : string.Empty;
+                File.WriteAllText(_path, Header + Environment.NewLine + existingRows, Encoding.UTF8);
             }
         }
 

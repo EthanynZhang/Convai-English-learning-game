@@ -11,10 +11,10 @@ namespace Game.Debate
 {
     public sealed class DebatePauseMenu : MonoBehaviour
     {
-        private const string PlayerVsNpcScene = "Level_PlayerVsNPCDebate";
-        private const string NpcVsNpcScene = "Level_NPCVsNPCDebate";
-        private const string InteractiveNpcScene = "Level_InteractiveNPCDebate";
-        private const string SharedInitiativeScene = "Level_SharedInitiativeOrchestration";
+        private const string PlayerVsNpcScene = "03Level_PlayerVsNPCDebate";
+        private const string NpcVsNpcScene = "01Level_NPCVsNPCDebate";
+        private const string InteractiveNpcScene = "02Level_InteractiveNPCDebate 1";
+        private const string SharedInitiativeScene = "04 coach Agent";
 
         private Canvas _canvas;
         private GameObject _menuRoot;

@@ -11,7 +11,7 @@ namespace Game.Tests.EditMode
 {
     public class SharedInitiativeCoachAgentTests
     {
-        private const string SharedInitiativeScenePath = "Game/Scenes/Level_SharedInitiativeOrchestration.unity";
+        private const string SharedInitiativeScenePath = "Game/Scenes/04 coach Agent.unity";
         private const string SharedInitiativeControllerGuid = "1bedf553246c4a589354b41b7f20d6df";
         private const string TranscriptBridgeGuid = "0ee0de56c9b14c74ae428d45f2e04d50";
 
@@ -212,7 +212,7 @@ namespace Game.Tests.EditMode
                 .ToArray();
 
             CollectionAssert.AreEquivalent(
-                new[] { "Level_SharedInitiativeOrchestration.unity" },
+                new[] { "04 coach Agent.unity" },
                 scenesWithCoach);
         }
 

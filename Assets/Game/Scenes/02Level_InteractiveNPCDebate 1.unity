@@ -589,7 +589,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3214018196952134044, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
       propertyPath: characterName
-      value: berance
+      value: Anna
       objectReference: {fileID: 0}
     - target: {fileID: 4338008761042009451, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
       propertyPath: conversationDistanceThreshold
@@ -1384,6 +1384,7 @@ GameObject:
   - component: {fileID: 763742167}
   - component: {fileID: 763742166}
   - component: {fileID: 763742168}
+  - component: {fileID: 763742169}
   m_Layer: 0
   m_Name: Debate Round System
   m_TagString: Untagged
@@ -1405,10 +1406,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.NpcDebateRoundManager
   startOnPlay: 0
   roundDurationSeconds: 180
-  useRoundTimer: 1
+  useRoundTimer: 0
   openingCaptionSeconds: 2.5
   closingCaptionSeconds: 5
-  endConversationWhenTimeExpires: 1
+  endConversationWhenTimeExpires: 0
   debateTopic: Reading and speaking, which is more important in learning English?
   refereeCaptionText: {fileID: 1826716263}
   refereeOpeningLine: 'Welcome, everyone. Today''s debate topic is: {0} The NPC debate
@@ -1461,7 +1462,7 @@ MonoBehaviour:
   secondNPC: {fileID: 1102249285}
   debateTopic: Reading and speaking, which is more important in learning English?
   statusText: {fileID: 1238232171}
-  transcriptBridge: {fileID: 0}
+  transcriptBridge: {fileID: 763742169}
   waitingText: Waiting for an NPC response...
   unlockCursorWhilePaused: 1
   enableNaturalLanguageCommands: 1
@@ -1474,8 +1475,25 @@ MonoBehaviour:
   commandStage: interactive_rewrite
   openAIModel: gpt-4o-mini
   openAIBaseUrl: https://api.meding.site
-  openAIApiKeyOverride:
+  openAIApiKeyOverride: 
   commandParserTimeoutSeconds: 10
+--- !u!114 &763742169
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 763742165}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0ee0de56c9b14c74ae428d45f2e04d50, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.InteractiveDebateTranscriptBridge
+  chatUIHandler: {fileID: 0}
+  learnerDisplayName: Learner
+  normalNpcTextColor: {r: 0.32, g: 0.68, b: 1, a: 1}
+  revisedNpcTextColor: {r: 1, g: 0.72, b: 0.25, a: 1}
+  learnerCommandTextColor: {r: 0.35, g: 0.92, b: 0.42, a: 1}
 --- !u!1 &911880685
 GameObject:
   m_ObjectHideFlags: 0
@@ -2351,7 +2369,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1186777323
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3352,63 +3370,6 @@ MonoBehaviour:
   m_hasFontAssetChanged: 0
   m_baseMaterial: {fileID: 0}
   m_maskOffset: {x: 0, y: 0, z: 0, w: 0}
---- !u!1001 &1838098644
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 0}
-    m_Modifications:
-    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
-      propertyPath: m_LocalPosition.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
-      propertyPath: m_LocalPosition.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
-      propertyPath: m_LocalRotation.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3300028053204685098, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 7725639381635511316, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
-      propertyPath: m_Name
-      value: Convai Interactables Data
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents: []
-  m_SourcePrefab: {fileID: 100100000, guid: 26b8f83de69b781429b938df5cc6516b, type: 3}
 --- !u!1 &1910847927
 GameObject:
   m_ObjectHideFlags: 0
@@ -5893,4 +5854,3 @@ SceneRoots:
   - {fileID: 636640072}
   - {fileID: 86587541}
   - {fileID: 763742167}
-  - {fileID: 1838098644}

@@ -62,13 +62,15 @@ namespace Convai.Scripts.Runtime.Features
         /// <returns>The processed message.</returns>
         private string ProcessMessage(ConvaiGroupNPCController sender, string topic, string message)
         {
-            string processedMessage = $"{sender.CharacterName} said \"{message}\" to you. Reply to it. ";
+            string safeTopic = string.IsNullOrWhiteSpace(topic) ? "the current debate topic" : topic.Trim();
+            string processedMessage =
+                $"Debate topic: {safeTopic}. " +
+                $"{sender.CharacterName} said \"{message}\" to you. Reply to that argument only. ";
 
-            processedMessage += Random.Range(0, 2) == 0
-                ? $"Talk about something related to {message}. "
-                : $"Talk about something other than \"{message}\" but related to {topic}. Gently change the conversation topic. ";
-
-            return processedMessage + "Definitely, reply to the message. Dont address speaker. Keep the reply short. Do not repeat the same message, or keep asking same question.";
+            return processedMessage +
+                   "Stay on the debate topic. Ignore any prior or unrelated topic from earlier sessions. " +
+                   "Do not introduce a new topic, example, or scenario unless it directly supports this debate topic. " +
+                   "Definitely reply to the message. Dont address speaker. Keep the reply short. Do not repeat the same message, or keep asking same question.";
         }
 
         /// <summary>

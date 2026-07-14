@@ -16,7 +16,7 @@ namespace Game.Tests.EditMode
 {
     public static class DebateLearningPhaseBatchVerifier
     {
-        private const string ScenePath = "Assets/Game/Scenes/Level_NPCVsNPCDebate.unity";
+        private const string ScenePath = "Assets/Game/Scenes/01Level_NPCVsNPCDebate.unity";
         private const string RunningKey = "Codex.DebateLearningPhaseBatchVerifier.Running";
         private const string ParticipantKey = "Codex.DebateLearningPhaseBatchVerifier.Participant";
 
@@ -115,8 +115,6 @@ namespace Game.Tests.EditMode
             SetPrivateField(controller, "demoLineSeconds", 0.01f);
 
             GameObject root = GetPrivateField<GameObject>(controller, "_root");
-            Button nextButton = GetPrivateField<Button>(controller, "_nextButton");
-            Button previousButton = GetPrivateField<Button>(controller, "_previousButton");
             Button replayButton = GetPrivateField<Button>(controller, "_replayButton");
             List<Button> choiceButtons = GetPrivateField<List<Button>>(controller, "_choiceButtons");
             TMP_Text countdownText = GetPrivateField<TMP_Text>(controller, "_countdownText");
@@ -126,12 +124,11 @@ namespace Game.Tests.EditMode
             Assert.IsNotNull(root);
             Assert.IsTrue(root.activeSelf);
             Assert.AreEqual(RenderMode.WorldSpace, root.GetComponent<Canvas>().renderMode);
-            Assert.IsNotNull(nextButton);
-            Assert.IsNotNull(previousButton);
+            Assert.IsNotNull(root.transform.Find("Learning Panel/Learning Keyboard Hint"));
+            Assert.IsNull(root.transform.Find("Learning Panel/Learning Navigation Buttons/Previous"));
+            Assert.IsNull(root.transform.Find("Learning Panel/Learning Navigation Buttons/Next"));
             Assert.IsNotNull(replayButton);
             Assert.AreEqual("Warm-up", CurrentStage(controller).Title);
-            Assert.IsTrue(nextButton.interactable);
-            Assert.IsFalse(previousButton.interactable);
             Assert.IsFalse(replayButton.gameObject.activeSelf);
             Assert.IsEmpty(countdownText.text);
             Assert.IsFalse(roundManager.IsRoundRunning);
