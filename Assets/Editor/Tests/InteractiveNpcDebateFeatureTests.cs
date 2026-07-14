@@ -91,5 +91,17 @@ namespace Game.Tests.EditMode
                 "ProcessMessage(receiver, npcGroup.topic, message)",
                 source);
         }
+
+        [Test]
+        public void Npc2NpcRelayMustKeepInteractiveDebateOnConfiguredTopic()
+        {
+            string source = File.ReadAllText(
+                Path.Combine(Application.dataPath, "Convai/Scripts/Runtime/Features/NPC2NPC/NPC2NPCConversationManager.cs"));
+
+            StringAssert.DoesNotContain("Gently change the conversation topic", source);
+            StringAssert.DoesNotContain("Talk about something other than", source);
+            StringAssert.Contains("Stay on the debate topic", source);
+            StringAssert.Contains("Ignore any prior or unrelated topic", source);
+        }
     }
 }

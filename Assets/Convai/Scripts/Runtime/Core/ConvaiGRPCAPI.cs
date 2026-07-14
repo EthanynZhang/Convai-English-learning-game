@@ -31,6 +31,7 @@ namespace Convai.Scripts.Runtime.Core
         private static bool _isInitializationErrorThrown;
         public static ConvaiGRPCAPI Instance;
         public static Func<string, bool> TryHandleUserVoiceTranscript;
+        public static Func<bool> ShouldSuppressVoiceResponse;
         private static bool _usageLimitNotificationSent;
         private ConvaiNPC _activeConvaiNPC;
         private string _apiKey;
@@ -309,6 +310,7 @@ namespace Convai.Scripts.Runtime.Core
             string characterID, ActionConfig actionConfig, FaceModel faceModel, string speakerID)
         {
             _currentVoiceTranscriptHandled = false;
+            _suppressCurrentVoiceResponse = ShouldSuppressVoiceResponse?.Invoke() == true;
             AsyncDuplexStreamingCall<GetResponseRequest, GetResponseResponse> call = GetAsyncDuplexStreamingCallOptions(client);
 
             GetResponseRequest getResponseConfigRequest =
@@ -816,6 +818,12 @@ namespace Convai.Scripts.Runtime.Core
                 _isFinalUserQueryTextBuffer = "";
                 _currentTranscript = null;
             }
+        }
+
+        public void ResetVoiceResponseSuppression()
+        {
+            _currentVoiceTranscriptHandled = false;
+            _suppressCurrentVoiceResponse = false;
         }
 
 

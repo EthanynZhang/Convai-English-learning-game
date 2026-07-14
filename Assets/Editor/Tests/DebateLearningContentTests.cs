@@ -1,5 +1,8 @@
 using System;
+using System.Collections;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 #if CROSSTALES_RTVOICE
 using Crosstales.RTVoice.Model;
 using Crosstales.RTVoice.Model.Enum;
@@ -44,6 +47,89 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void VoicePracticeContentDefinesFiveOrderedPromptsAndSpeakingFirstTopic()
+        {
+            Type promptType = typeof(DebateLearningContent).Assembly.GetType("Game.Debate.CreeiVoicePracticePrompt");
+            Assert.IsNotNull(promptType, "The immutable CREEI voice prompt model is required.");
+
+            FieldInfo promptField = typeof(DebateLearningContent).GetField(
+                "CreeiVoicePracticePrompts",
+                BindingFlags.Public | BindingFlags.Static);
+            Assert.IsNotNull(promptField, "The fixed five-step prompt collection is required.");
+
+            object[] prompts = ((IEnumerable)promptField.GetValue(null)).Cast<object>().ToArray();
+            string[] expectedTitles = { "Claim", "Reason", "Evidence", "Explanation", "Impact" };
+            CollectionAssert.AreEqual(expectedTitles, prompts.Select(prompt => ReadProperty<string>(prompt, "Title")).ToArray());
+            Assert.IsTrue(prompts.All(prompt => !string.IsNullOrWhiteSpace(ReadProperty<string>(prompt, "Prompt"))));
+
+            StringAssert.Contains("Reading and speaking", DebateLearningContent.OneSentenceTryText);
+            StringAssert.Contains("Speaking is more important", DebateLearningContent.CreeiVoicePracticePrompts[0].Prompt);
+            Assert.AreEqual(240f, DebateLearningContent.OneSentencePracticeSeconds, 0.001f);
+        }
+
+        [Test]
+        public void VoicePracticeMetricsKeepOnlyConfirmedPartsAggregateTextAndCountRerecords()
+        {
+            DebateLearningMetrics metrics = new();
+            Type partKeyType = typeof(DebateLearningContent).Assembly.GetType("Game.Debate.CreeiPartKey");
+            Assert.IsNotNull(partKeyType, "A stable CREEI part key is required for research logging.");
+
+            MethodInfo recordConfirmedPart = typeof(DebateLearningMetrics).GetMethod("RecordMicroPractice2ConfirmedPart");
+            MethodInfo recordRerecord = typeof(DebateLearningMetrics).GetMethod("RecordMicroPractice2Rerecord");
+            Assert.IsNotNull(recordConfirmedPart, "Confirmed voice transcripts require an explicit metrics API.");
+            Assert.IsNotNull(recordRerecord, "Re-record attempts require an explicit metrics API.");
+
+            recordConfirmedPart.Invoke(metrics, new[] { Enum.Parse(partKeyType, "Claim"), "I support guided AI use." });
+            recordConfirmedPart.Invoke(metrics, new[] { Enum.Parse(partKeyType, "Reason"), "It helps students plan." });
+            recordConfirmedPart.Invoke(metrics, new[] { Enum.Parse(partKeyType, "Evidence"), "Our class used it to make outlines." });
+            recordConfirmedPart.Invoke(metrics, new[] { Enum.Parse(partKeyType, "Explanation"), "That planning leaves students responsible for writing." });
+            recordConfirmedPart.Invoke(metrics, new[] { Enum.Parse(partKeyType, "Impact"), "This supports fair learning." });
+            recordRerecord.Invoke(metrics, null);
+
+            Assert.AreEqual("CREEI_voice_5_step", metrics.MicroPractice2TemplateChoice);
+            StringAssert.Contains("Claim: I support guided AI use.", metrics.MicroPractice2ShortText);
+            StringAssert.Contains("Impact: This supports fair learning.", metrics.MicroPractice2ShortText);
+            Assert.AreEqual("I support guided AI use.", ReadProperty<string>(metrics, "MicroPractice2Claim"));
+            Assert.AreEqual("This supports fair learning.", ReadProperty<string>(metrics, "MicroPractice2Impact"));
+            Assert.IsTrue(ReadProperty<bool>(metrics, "MicroPractice2Completed"));
+            Assert.AreEqual(1, ReadProperty<int>(metrics, "MicroPractice2RerecordCount"));
+        }
+
+        [Test]
+        public void VoicePracticeCsvAppendsConfirmedPartsCompletionAndRerecordCount()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "debate-learning-" + Guid.NewGuid().ToString("N") + ".csv");
+            try
+            {
+                DebateLearningMetrics metrics = new();
+                Type partKeyType = typeof(DebateLearningContent).Assembly.GetType("Game.Debate.CreeiPartKey");
+                MethodInfo recordConfirmedPart = typeof(DebateLearningMetrics).GetMethod("RecordMicroPractice2ConfirmedPart");
+                Assert.IsNotNull(partKeyType);
+                Assert.IsNotNull(recordConfirmedPart);
+
+                recordConfirmedPart.Invoke(metrics, new[] { Enum.Parse(partKeyType, "Claim"), "AI, with \"rules\"\nand guidance." });
+                foreach (string part in new[] { "Reason", "Evidence", "Explanation", "Impact" })
+                {
+                    recordConfirmedPart.Invoke(metrics, new[] { Enum.Parse(partKeyType, part), part + " final." });
+                }
+
+                new DebateLearningLogger(path).LogFinalSummary("P_TEST", "npc_vs_npc", metrics);
+                string[] lines = File.ReadAllLines(path);
+                StringAssert.Contains("micro_practice_2_claim", lines[0]);
+                StringAssert.Contains("micro_practice_2_completed", lines[0]);
+                StringAssert.Contains("micro_practice_2_rerecord_count", lines[0]);
+                StringAssert.Contains("\"AI, with \"\"rules\"\"", File.ReadAllText(path));
+            }
+            finally
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+        }
+
+        [Test]
         public void LearningPhaseMetricsAccumulateStageDurations()
         {
             DebateLearningMetrics metrics = new();
@@ -64,6 +150,13 @@ namespace Game.Tests.EditMode
             Assert.AreEqual(375f, metrics.TotalLearningPhaseTime, 0.001f);
             Assert.AreEqual("Logos", metrics.StrategyVersionViewed);
             Assert.AreEqual(2, metrics.RewatchCount);
+        }
+
+        private static T ReadProperty<T>(object target, string name)
+        {
+            PropertyInfo property = target.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            Assert.IsNotNull(property, $"Missing required property: {name}");
+            return (T)property.GetValue(target);
         }
 
         [Test]
@@ -91,13 +184,14 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void LearningPhaseDefaultDurationStaysWithinTwelveMinutes()
+        public void LearningPhaseDefaultDurationIncludesTheFourMinuteVoicePracticeReference()
         {
             float seconds = DebateLearningContent.StageSequence
                 .Where(stage => !stage.IsTerminal)
                 .Sum(stage => stage.MinimumSeconds);
 
-            Assert.LessOrEqual(seconds, 720f);
+            Assert.GreaterOrEqual(seconds, DebateLearningContent.OneSentencePracticeSeconds);
+            Assert.AreEqual(240f, DebateLearningContent.OneSentencePracticeSeconds, 0.001f);
         }
 
         [Test]
@@ -156,6 +250,45 @@ namespace Game.Tests.EditMode
             string path = DebateLearningContent.GetDialogueClipResourcePath(DebateLearningStageKey.CreeiDialogueDemo, 1, line);
 
             Assert.AreEqual("DebateLearningTts/CreeiDialogueDemo_01_Mike", path);
+        }
+
+        [Test]
+        public void LearningControllerUsesKeyboardHintsInsteadOfPreviousAndNextButtons()
+        {
+            string source = ReadLearningControllerSource();
+
+            StringAssert.Contains("CreateKeyboardNavigationHint(panel.transform);", source);
+            StringAssert.Contains("\"Learning Keyboard Hint\"", source);
+            StringAssert.Contains("\"Previous\"", source);
+            StringAssert.Contains("\"Next / Confirm\"", source);
+            StringAssert.Contains("CreateRect(\"Key Glyph\", keycap.transform)", source);
+            StringAssert.Contains("rootLayout.preferredHeight = 96f;", source);
+            StringAssert.Contains("keycapSize.preferredWidth = 88f;", source);
+            StringAssert.Contains("keyText.fontSize = 42f;", source);
+            StringAssert.DoesNotContain("_previousButton = CreateButton", source);
+            StringAssert.DoesNotContain("_nextButton = CreateButton", source);
+        }
+
+        [Test]
+        public void LearningControllerIsolatesOrdinaryConvaiConversationForEntireTutorial()
+        {
+            string source = ReadLearningControllerSource();
+
+            StringAssert.Contains("RegisterTutorialInputIsolation();", source);
+            StringAssert.Contains("ConvaiGRPCAPI.TryHandleUserVoiceTranscript = TryHandleTutorialVoiceTranscript;", source);
+            StringAssert.Contains("ConvaiPlayerInteractionManager.TryHandleTextSubmission = TryHandleTutorialTextSubmission;", source);
+            StringAssert.Contains("ConvaiInputManager.ShouldSuppressTalkInput = ShouldSuppressTutorialTalkInput;", source);
+            StringAssert.Contains("return enabled && _started && !_completed;", source);
+            StringAssert.Contains("UnregisterTutorialInputIsolation();", source);
+        }
+
+        private static string ReadLearningControllerSource()
+        {
+            return File.ReadAllText(Path.Combine(
+                "Assets",
+                "Game",
+                "Scripts",
+                "NpcDebateLearningPhaseController.cs"));
         }
 
 #if CROSSTALES_RTVOICE

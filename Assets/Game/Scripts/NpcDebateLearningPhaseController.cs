@@ -2,7 +2,9 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System;
 using Convai.Scripts.Runtime.Core;
+using Convai.Scripts.Runtime.UI;
 #if CROSSTALES_RTVOICE
 using Crosstales.RTVoice;
 using Crosstales.RTVoice.Model;
@@ -20,7 +22,7 @@ namespace Game.Debate
     [DefaultExecutionOrder(-500)]
     public sealed class NpcDebateLearningPhaseController : MonoBehaviour
     {
-        private const string TargetSceneName = "Level_NPCVsNPCDebate";
+        private const string TargetSceneNameSuffix = "Level_NPCVsNPCDebate";
         private const string AnnaSpeakerId = "Anna";
         private const string MikeSpeakerId = "Mike";
 
@@ -51,13 +53,15 @@ namespace Game.Debate
         [SerializeField] private bool useLocalCachedTts;
         [SerializeField] private bool fallbackToConvaiVoiceIfClipMissing;
         [SerializeField] private float demoLineSeconds = 6f;
+        [SerializeField] private bool narrateEveryLearningStage = true;
+        [SerializeField] private bool useMiniMaxStageNarration = true;
 
         [Header("World Panel")]
         [SerializeField] private Transform panelWorldAnchor;
         [SerializeField] private Vector2 panelSize = new(1450f, 1150f);
         [SerializeField] private float panelWorldScale = 0.0025085f;
         [SerializeField] private bool useFixedPanelTransform = true;
-        [SerializeField] private Vector3 fixedPanelPosition = new(-0.31524f, 1.0433f, 3.7437f);
+        [SerializeField] private Vector3 fixedPanelPosition = new(-0.31524f, 1.45f, 3.7437f);
         [SerializeField] private Vector3 fixedPanelEulerAngles;
         [SerializeField] private float defaultForwardOffset = 1.2f;
         [SerializeField] private float defaultDownOffset = 0.75f;
@@ -77,8 +81,14 @@ namespace Game.Debate
         private TMP_Text _currentSpeakerText;
         private TMP_Text _transcriptText;
         private TMP_Text _demoStatusText;
+        private TMP_Text _voicePracticeTranscriptText;
+        private TMP_Text _voicePracticeStatusText;
+        private TMP_Text _voicePracticeCompletedText;
         private LayoutElement _bodyLayout;
         private LayoutElement _transcriptLayout;
+        private LayoutElement _voicePracticeTranscriptLayout;
+        private LayoutElement _voicePracticeStatusLayout;
+        private LayoutElement _voicePracticeCompletedLayout;
         private GameObject _choiceButtonsRoot;
         private GameObject _rationaleButtonsRoot;
         private GameObject _shortTextInputRoot;
@@ -86,19 +96,34 @@ namespace Game.Debate
         private LayoutElement _choiceButtonsLayout;
         private LayoutElement _rationaleButtonsLayout;
         private LayoutElement _navigationLayout;
-        private Button _previousButton;
         private Button _replayButton;
-        private Button _nextButton;
 
         private int _stageIndex;
         private float _stageElapsed;
         private bool _completed;
         private bool _started;
         private Coroutine _demoRoutine;
+        private Coroutine _stageNarrationRoutine;
         private DemoDialogueLine[] _currentDialogueLines = System.Array.Empty<DemoDialogueLine>();
         private int _currentDialogueLineIndex = -1;
         private ConvaiNPC _currentAudioNpc;
         private AudioSource _currentDemoAudioSource;
+        private AudioClip _currentGeneratedAudioClip;
+        private MiniMaxTtsClient _miniMaxTtsClient;
+        private int _narrationGeneration;
+        private bool _stageNarrationInProgress;
+        private bool _loggedMiniMaxNarrationFallback;
+
+        private readonly string[] _voicePracticeTranscripts = new string[DebateLearningContent.CreeiVoicePracticePrompts.Length];
+        private readonly bool[] _voicePracticeConfirmed = new bool[DebateLearningContent.CreeiVoicePracticePrompts.Length];
+        private readonly int[] _voicePracticeRerecordCounts = new int[DebateLearningContent.CreeiVoicePracticePrompts.Length];
+        private int _voicePracticeStepIndex;
+        private bool _voicePracticeRecording;
+        private bool _voicePracticeAwaitingTranscript;
+        private bool _voicePracticeInitialized;
+        private float _voicePracticeAwaitingSince;
+        private string _voicePracticeRetryStatus = string.Empty;
+        private const float VoicePracticeTranscriptTimeoutSeconds = 30f;
 #if CROSSTALES_RTVOICE
         private bool _loggedRtVoiceSelection;
         private float _lastRtVoiceProviderReloadTime = -999f;
@@ -109,7 +134,7 @@ namespace Game.Debate
 
         private void Awake()
         {
-            if (SceneManager.GetActiveScene().name != TargetSceneName)
+            if (!IsTargetSceneName(SceneManager.GetActiveScene().name))
             {
                 enabled = false;
                 return;
@@ -123,6 +148,12 @@ namespace Game.Debate
             SetLearningCursor(true);
         }
 
+        internal static bool IsTargetSceneName(string sceneName)
+        {
+            return !string.IsNullOrWhiteSpace(sceneName) &&
+                   sceneName.EndsWith(TargetSceneNameSuffix, StringComparison.OrdinalIgnoreCase);
+        }
+
         private void Start()
         {
             if (_started || !enabled)
@@ -131,6 +162,7 @@ namespace Game.Debate
             }
 
             _started = true;
+            RegisterTutorialInputIsolation();
             EnterStage(0);
         }
 
@@ -142,8 +174,20 @@ namespace Game.Debate
             }
 
             _stageElapsed += Time.deltaTime;
+            UpdateVoicePracticeTimeout();
             HandleKeyboardInput();
             UpdateControls(CurrentStage);
+        }
+
+        private void OnDisable()
+        {
+            StopDemoPlayback();
+            UnregisterTutorialInputIsolation();
+        }
+
+        private void OnDestroy()
+        {
+            UnregisterTutorialInputIsolation();
         }
 
         public void Configure(NpcDebateRoundManager manager)
@@ -171,6 +215,37 @@ namespace Game.Debate
             {
                 secondaryDemoNPC = FindNpcByName(npcs, "Mike") ?? npcs.FirstOrDefault(npc => npc != primaryDemoNPC);
             }
+
+            _miniMaxTtsClient = GetComponent<MiniMaxTtsClient>();
+            if (_miniMaxTtsClient == null)
+            {
+                _miniMaxTtsClient = gameObject.AddComponent<MiniMaxTtsClient>();
+            }
+
+            EnsureAudioLipSync(primaryDemoNPC);
+            EnsureAudioLipSync(secondaryDemoNPC);
+        }
+
+        private static void EnsureAudioLipSync(ConvaiNPC npc)
+        {
+            if (npc == null)
+            {
+                return;
+            }
+
+            AudioSource source = npc.GetComponent<AudioSource>();
+            if (source == null)
+            {
+                source = npc.gameObject.AddComponent<AudioSource>();
+            }
+
+            AudioDrivenNpcLipSync lipSync = npc.GetComponent<AudioDrivenNpcLipSync>();
+            if (lipSync == null)
+            {
+                lipSync = npc.gameObject.AddComponent<AudioDrivenNpcLipSync>();
+            }
+
+            lipSync.Configure(source);
         }
 
         private static ConvaiNPC FindNpcByName(IEnumerable<ConvaiNPC> npcs, string namePart)
@@ -231,9 +306,15 @@ namespace Game.Debate
             _currentSpeakerText = CreateText(panel.transform, string.Empty, 35, FontStyles.Bold, 46f, new Color(0.12f, 0.22f, 0.28f));
             _transcriptText = CreateText(panel.transform, string.Empty, 35, FontStyles.Normal, 520f, new Color(0.08f, 0.10f, 0.12f));
             _demoStatusText = CreateText(panel.transform, string.Empty, 32, FontStyles.Bold, 42f, new Color(0.20f, 0.25f, 0.25f));
+            _voicePracticeTranscriptText = CreateText(panel.transform, string.Empty, 32, FontStyles.Normal, 190f, new Color(0.08f, 0.10f, 0.12f));
+            _voicePracticeStatusText = CreateText(panel.transform, string.Empty, 30, FontStyles.Bold, 54f, new Color(0.20f, 0.25f, 0.25f));
+            _voicePracticeCompletedText = CreateText(panel.transform, string.Empty, 27, FontStyles.Normal, 54f, new Color(0.18f, 0.24f, 0.26f));
             _countdownText = CreateText(panel.transform, string.Empty, 1, FontStyles.Normal, 1f, Color.clear);
             _bodyLayout = _bodyText.GetComponent<LayoutElement>();
             _transcriptLayout = _transcriptText.GetComponent<LayoutElement>();
+            _voicePracticeTranscriptLayout = _voicePracticeTranscriptText.GetComponent<LayoutElement>();
+            _voicePracticeStatusLayout = _voicePracticeStatusText.GetComponent<LayoutElement>();
+            _voicePracticeCompletedLayout = _voicePracticeCompletedText.GetComponent<LayoutElement>();
 
             GameObject choices = CreateRect("Learning Choice Buttons", panel.transform);
             _choiceButtonsRoot = choices;
@@ -290,12 +371,10 @@ namespace Game.Debate
             navigationLayoutElement.minHeight = 46f;
             _navigationLayout = navigationLayoutElement;
 
-            _previousButton = CreateButton(navigation.transform, "Previous", PreviousStage, new Color(0.34f, 0.39f, 0.43f));
             _replayButton = CreateButton(navigation.transform, "Replay Demo", ReplayCurrentDemo, new Color(0.45f, 0.33f, 0.14f));
-            _nextButton = CreateButton(navigation.transform, "Next", AdvanceStage, new Color(0.13f, 0.47f, 0.33f));
-            ConfigureButtonVisual(_previousButton, 42f, 24f);
             ConfigureButtonVisual(_replayButton, 42f, 24f);
-            ConfigureButtonVisual(_nextButton, 42f, 24f);
+
+            CreateKeyboardNavigationHint(panel.transform);
         }
 
         private void PositionWorldPanel(Transform panel)
@@ -339,6 +418,9 @@ namespace Game.Debate
             _currentSpeakerText.text = string.Empty;
             _transcriptText.text = string.Empty;
             _demoStatusText.text = string.Empty;
+            _voicePracticeTranscriptText.text = string.Empty;
+            _voicePracticeStatusText.text = string.Empty;
+            _voicePracticeCompletedText.text = string.Empty;
             _countdownText.text = string.Empty;
             SetChoiceButtons(System.Array.Empty<string>(), null);
             SetRationaleButtons(System.Array.Empty<string>(), null);
@@ -347,7 +429,8 @@ namespace Game.Debate
 
             if (IsDemoStage(stage.Key))
             {
-                BeginDemoStage(stage);
+                _currentDialogueLines = DebateLearningContent.GetDialogueLines(stage.Key);
+                SetTranscriptText(_currentDialogueLines, -1);
             }
             else if (IsMicroPracticeStage(stage.Key))
             {
@@ -359,6 +442,7 @@ namespace Game.Debate
             }
 
             UpdateControls(stage);
+            BeginStageNarration(stage);
         }
 
         private void ConfigureMicroPracticeStage(DebateLearningStageKey key)
@@ -368,6 +452,28 @@ namespace Game.Debate
             SetShortTextInputVisible(false);
             _shortTextInput.text = string.Empty;
             _transcriptText.text = string.Empty;
+
+            if (IsVoicePracticeStage(key))
+            {
+                ConfigureVoicePracticeStage();
+                return;
+            }
+
+            _voicePracticeTranscriptText.text = string.Empty;
+            _voicePracticeStatusText.text = string.Empty;
+            _voicePracticeCompletedText.text = string.Empty;
+        }
+
+        private void ConfigureVoicePracticeStage()
+        {
+            if (!_voicePracticeInitialized)
+            {
+                _voicePracticeInitialized = true;
+                _voicePracticeStepIndex = 0;
+            }
+
+            _voicePracticeStepIndex = FindFirstUnfinishedVoicePracticeStep();
+            RenderVoicePractice();
         }
 
         private void ConfigureMicroChoiceStage()
@@ -393,6 +499,118 @@ namespace Game.Debate
             _demoRoutine = StartCoroutine(PlayDemoLines(_currentDialogueLines));
         }
 
+        private void BeginStageNarration(DebateLearningStageSpec stage)
+        {
+            if (!narrateEveryLearningStage || stage.IsTerminal || primaryDemoNPC == null)
+            {
+                if (IsDemoStage(stage.Key))
+                {
+                    BeginDemoStage(stage);
+                }
+
+                return;
+            }
+
+            _stageNarrationInProgress = true;
+            int generation = ++_narrationGeneration;
+            if (IsDemoStage(stage.Key))
+            {
+                _currentSpeakerText.text = "Current Speaker: Anna Reed (stage guide)";
+                _demoStatusText.text = "Anna is introducing this stage...";
+            }
+
+            if (IsVoicePracticeStage(stage.Key))
+            {
+                _voicePracticeStatusText.text = "Anna is introducing this stage. Please wait before pressing T.";
+            }
+
+            _stageNarrationRoutine = StartCoroutine(PlayStageNarrationThenContinue(stage, generation));
+        }
+
+        private IEnumerator PlayStageNarrationThenContinue(DebateLearningStageSpec stage, int generation)
+        {
+            string narrationText = BuildStageNarrationText(stage);
+            AudioClip generatedClip = null;
+            string miniMaxError = string.Empty;
+
+            if (useMiniMaxStageNarration && _miniMaxTtsClient != null)
+            {
+                yield return _miniMaxTtsClient.RequestClip(
+                    narrationText,
+                    generation,
+                    IsNarrationGenerationCurrent,
+                    clip => generatedClip = clip,
+                    error => miniMaxError = error);
+            }
+
+            if (!IsNarrationGenerationCurrent(generation))
+            {
+                yield break;
+            }
+
+            float speechSeconds = 0f;
+            if (generatedClip != null)
+            {
+                speechSeconds = PlayAudioClipOnNpc(generatedClip, primaryDemoNPC, true);
+            }
+
+#if CROSSTALES_RTVOICE
+            if (speechSeconds <= 0f && useRtVoiceTts)
+            {
+                DemoDialogueLine narrationLine = new(AnnaSpeakerId, "Anna Reed", narrationText);
+                TryPlayRtVoiceDemoTts(narrationLine, primaryDemoNPC, out speechSeconds);
+            }
+#endif
+
+            if (speechSeconds <= 0f && !_loggedMiniMaxNarrationFallback)
+            {
+                _loggedMiniMaxNarrationFallback = true;
+                string reason = string.IsNullOrWhiteSpace(miniMaxError)
+                    ? "No MiniMax or RT-Voice speech provider was available."
+                    : miniMaxError;
+                Debug.LogWarning("Anna stage narration could not play. The tutorial will continue without blocking. " + reason);
+            }
+
+            if (speechSeconds > 0f)
+            {
+                yield return new WaitForSeconds(speechSeconds + 0.15f);
+            }
+
+            if (!IsNarrationGenerationCurrent(generation))
+            {
+                yield break;
+            }
+
+            StopCurrentDemoAudio();
+            _stageNarrationInProgress = false;
+            _stageNarrationRoutine = null;
+
+            if (IsDemoStage(stage.Key))
+            {
+                BeginDemoStage(stage);
+            }
+            else if (IsVoicePracticeStage(stage.Key))
+            {
+                RenderVoicePractice();
+            }
+        }
+
+        private bool IsNarrationGenerationCurrent(int generation)
+        {
+            return enabled && !_completed && generation == _narrationGeneration;
+        }
+
+        private static string BuildStageNarrationText(DebateLearningStageSpec stage)
+        {
+            string body = (stage.Body ?? string.Empty)
+                .Replace("\r", " ")
+                .Replace("\n", " ")
+                .Replace("_", string.Empty);
+            return string.IsNullOrWhiteSpace(body)
+                ? stage.Title
+                : stage.Title + ". " + body;
+        }
+
         private IEnumerator PlayDemoLines(DemoDialogueLine[] lines)
         {
             for (int i = 0; i < lines.Length; i++)
@@ -402,7 +620,19 @@ namespace Game.Debate
                 _currentSpeakerText.text = $"Current Speaker: {line.SpeakerName}";
                 SetTranscriptText(lines, i);
                 ConvaiNPC speaker = GetNpcForLine(line);
-                float voiceSeconds = PlayDialogueLine(CurrentStage.Key, i, line, speaker);
+                float voiceSeconds = 0f;
+                if (string.Equals(line.SpeakerId, AnnaSpeakerId, StringComparison.OrdinalIgnoreCase))
+                {
+                    yield return PlayAnnaDialogueLineWithStageVoice(
+                        line,
+                        speaker,
+                        seconds => voiceSeconds = seconds);
+                }
+                else
+                {
+                    voiceSeconds = PlayDialogueLine(CurrentStage.Key, i, line, speaker);
+                }
+
                 float waitSeconds = voiceSeconds > 0f ? voiceSeconds + 0.2f : demoLineSeconds;
                 yield return new WaitForSeconds(Mathf.Max(0.1f, waitSeconds));
                 if (_currentAudioNpc == speaker)
@@ -417,9 +647,62 @@ namespace Game.Debate
             _demoRoutine = null;
         }
 
+        private IEnumerator PlayAnnaDialogueLineWithStageVoice(
+            DemoDialogueLine line,
+            ConvaiNPC speaker,
+            Action<float> onCompleted)
+        {
+            if (!playNpcVoice || speaker == null || string.IsNullOrWhiteSpace(line.Text))
+            {
+                onCompleted?.Invoke(0f);
+                yield break;
+            }
+
+            int generation = _narrationGeneration;
+            AudioClip generatedClip = null;
+            string miniMaxError = string.Empty;
+            if (useMiniMaxStageNarration && _miniMaxTtsClient != null)
+            {
+                yield return _miniMaxTtsClient.RequestClip(
+                    line.Text,
+                    generation,
+                    IsNarrationGenerationCurrent,
+                    clip => generatedClip = clip,
+                    error => miniMaxError = error);
+            }
+
+            if (!IsNarrationGenerationCurrent(generation))
+            {
+                yield break;
+            }
+
+            float speechSeconds = 0f;
+            if (generatedClip != null)
+            {
+                speechSeconds = PlayAudioClipOnNpc(generatedClip, speaker, true);
+            }
+
+#if CROSSTALES_RTVOICE
+            if (speechSeconds <= 0f && useRtVoiceTts)
+            {
+                TryPlayRtVoiceDemoTts(line, speaker, out speechSeconds);
+            }
+#endif
+
+            if (speechSeconds <= 0f)
+            {
+                string reason = string.IsNullOrWhiteSpace(miniMaxError)
+                    ? "No MiniMax or RT-Voice speech provider was available."
+                    : miniMaxError;
+                Debug.LogWarning("Anna dialogue demo voice could not play. " + reason);
+            }
+
+            onCompleted?.Invoke(speechSeconds);
+        }
+
         private void ReplayCurrentDemo()
         {
-            if (!IsDemoStage(CurrentStage.Key))
+            if (!IsDemoStage(CurrentStage.Key) || _stageNarrationInProgress)
             {
                 return;
             }
@@ -434,6 +717,17 @@ namespace Game.Debate
 
         private void HandleKeyboardInput()
         {
+            if (IsVoicePracticeStage(CurrentStage.Key) && Input.GetKeyDown(KeyCode.T))
+            {
+                if (_stageNarrationInProgress)
+                {
+                    return;
+                }
+
+                ToggleVoicePracticeRecording();
+                return;
+            }
+
             if (Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.Keypad6))
             {
                 HandleKeyboardShortcut(KeyCode.RightArrow);
@@ -462,25 +756,19 @@ namespace Game.Debate
             switch (key)
             {
                 case KeyCode.RightArrow:
-                    if (CanUseButton(_nextButton))
-                    {
-                        AdvanceStage();
-                    }
+                    AdvanceStage();
                     break;
                 case KeyCode.LeftArrow:
-                    if (CanUseButton(_previousButton))
-                    {
-                        PreviousStage();
-                    }
+                    PreviousStage();
                     break;
                 case KeyCode.DownArrow:
-                    if (CanUseButton(_replayButton))
+                    if (IsDemoStage(CurrentStage.Key))
                     {
                         ReplayCurrentDemo();
                     }
                     break;
                 case KeyCode.UpArrow:
-                    if (CanUseButton(_replayButton))
+                    if (IsDemoStage(CurrentStage.Key))
                     {
                         ReplayCurrentDemo();
                     }
@@ -488,13 +776,13 @@ namespace Game.Debate
             }
         }
 
-        private static bool CanUseButton(Button button)
-        {
-            return button != null && button.gameObject.activeInHierarchy && button.interactable;
-        }
-
         private void PreviousStage()
         {
+            if (IsVoicePracticeStage(CurrentStage.Key) && IsVoicePracticeInputBlocked())
+            {
+                return;
+            }
+
             if (_stageIndex <= 0)
             {
                 return;
@@ -507,6 +795,17 @@ namespace Game.Debate
         }
 
         private void AdvanceStage()
+        {
+            if (IsVoicePracticeStage(CurrentStage.Key))
+            {
+                ConfirmVoicePracticeStep();
+                return;
+            }
+
+            AdvanceToNextStage();
+        }
+
+        private void AdvanceToNextStage()
         {
             CaptureCurrentStageTextInput();
             StopDemoPlayback();
@@ -545,6 +844,7 @@ namespace Game.Debate
             _logger.LogFinalSummary(participantId, condition, _metrics);
 
             _completed = true;
+            UnregisterTutorialInputIsolation();
             _root.SetActive(false);
             SetLearningCursor(false);
             roundManager?.BeginRound();
@@ -564,6 +864,14 @@ namespace Game.Debate
 
         private void StopDemoPlayback()
         {
+            _narrationGeneration++;
+            _stageNarrationInProgress = false;
+            if (_stageNarrationRoutine != null)
+            {
+                StopCoroutine(_stageNarrationRoutine);
+                _stageNarrationRoutine = null;
+            }
+
             if (_demoRoutine != null)
             {
                 StopCoroutine(_demoRoutine);
@@ -571,6 +879,32 @@ namespace Game.Debate
             }
 
             StopCurrentDemoAudio();
+        }
+
+        private float PlayAudioClipOnNpc(AudioClip clip, ConvaiNPC speaker, bool destroyWhenStopped)
+        {
+            if (clip == null || speaker == null)
+            {
+                return 0f;
+            }
+
+            AudioSource audioSource = speaker.GetComponent<AudioSource>();
+            if (audioSource == null)
+            {
+                audioSource = speaker.gameObject.AddComponent<AudioSource>();
+                EnsureAudioLipSync(speaker);
+            }
+
+            StopCurrentDemoAudio();
+            speaker.StopAllAudioPlayback();
+            audioSource.clip = clip;
+            audioSource.Play();
+
+            _currentAudioNpc = speaker;
+            _currentDemoAudioSource = audioSource;
+            _currentGeneratedAudioClip = destroyWhenStopped ? clip : null;
+            SetDemoTalkingState(speaker, true);
+            return clip.length;
         }
 
         private float PlayDialogueLine(DebateLearningStageKey stageKey, int lineIndex, DemoDialogueLine line, ConvaiNPC speaker)
@@ -862,16 +1196,8 @@ namespace Game.Debate
                 return false;
             }
 
-            StopCurrentDemoAudio();
-            speaker.StopAllAudioPlayback();
-            audioSource.clip = clip;
-            audioSource.Play();
-
-            _currentAudioNpc = speaker;
-            _currentDemoAudioSource = audioSource;
-            SetDemoTalkingState(speaker, true);
-            clipSeconds = clip.length;
-            return true;
+            clipSeconds = PlayAudioClipOnNpc(clip, speaker, false);
+            return clipSeconds > 0f;
         }
 
         private void StopCurrentDemoAudio()
@@ -885,6 +1211,12 @@ namespace Game.Debate
 
             if (_currentAudioNpc == null)
             {
+                if (_currentGeneratedAudioClip != null)
+                {
+                    Destroy(_currentGeneratedAudioClip);
+                    _currentGeneratedAudioClip = null;
+                }
+
                 return;
             }
 
@@ -900,6 +1232,11 @@ namespace Game.Debate
             _currentAudioNpc.ResetCharacterAnimation();
             _currentAudioNpc = null;
             _currentDemoAudioSource = null;
+            if (_currentGeneratedAudioClip != null)
+            {
+                Destroy(_currentGeneratedAudioClip);
+                _currentGeneratedAudioClip = null;
+            }
         }
 
         private static void SetDemoTalkingState(ConvaiNPC npc, bool isTalking)
@@ -970,33 +1307,33 @@ namespace Game.Debate
 
         private void UpdateControls(DebateLearningStageSpec stage)
         {
+            SetTextObjectActive(_progressText, true);
+            SetTextObjectActive(_titleText, true);
+
+            if (IsVoicePracticeStage(stage.Key))
+            {
+                UpdateVoicePracticeControls();
+                return;
+            }
+
             bool isDemo = IsDemoStage(stage.Key);
             bool isMicroChoice = stage.Key == DebateLearningStageKey.MicroChoice;
             bool isMicroPractice = IsMicroPracticeStage(stage.Key);
             bool showsReflectionText = isMicroChoice || isMicroPractice;
 
-            if (_previousButton != null)
-            {
-                _previousButton.gameObject.SetActive(true);
-                _previousButton.interactable = _stageIndex > 0;
-            }
-
             if (_replayButton != null)
             {
                 _replayButton.gameObject.SetActive(isDemo);
-                _replayButton.interactable = isDemo;
-            }
-
-            if (_nextButton != null)
-            {
-                _nextButton.gameObject.SetActive(true);
-                _nextButton.interactable = true;
+                _replayButton.interactable = isDemo && !_stageNarrationInProgress;
             }
 
             SetTextObjectActive(_strategyLabelText, !string.IsNullOrWhiteSpace(_strategyLabelText != null ? _strategyLabelText.text : string.Empty));
             SetTextObjectActive(_currentSpeakerText, isDemo);
             SetTextObjectActive(_demoStatusText, isDemo);
             SetTextObjectActive(_transcriptText, isDemo || showsReflectionText);
+            SetTextObjectActive(_voicePracticeTranscriptText, false);
+            SetTextObjectActive(_voicePracticeStatusText, false);
+            SetTextObjectActive(_voicePracticeCompletedText, false);
 
             if (_choiceButtonsRoot != null)
             {
@@ -1019,12 +1356,45 @@ namespace Game.Debate
             }
         }
 
+        private void UpdateVoicePracticeControls()
+        {
+            SetTextObjectActive(_progressText, true);
+            SetTextObjectActive(_titleText, true);
+
+            if (_replayButton != null)
+            {
+                _replayButton.gameObject.SetActive(false);
+                _replayButton.interactable = false;
+            }
+
+            SetTextObjectActive(_strategyLabelText, false);
+            SetTextObjectActive(_currentSpeakerText, false);
+            SetTextObjectActive(_demoStatusText, false);
+            SetTextObjectActive(_transcriptText, false);
+            SetTextObjectActive(_voicePracticeTranscriptText, true);
+            SetTextObjectActive(_voicePracticeStatusText, true);
+            SetTextObjectActive(_voicePracticeCompletedText, true);
+
+            if (_choiceButtonsRoot != null)
+            {
+                _choiceButtonsRoot.SetActive(false);
+            }
+
+            if (_rationaleButtonsRoot != null)
+            {
+                _rationaleButtonsRoot.SetActive(false);
+            }
+        }
+
         private void ConfigureStageLayout(DebateLearningStageKey key)
         {
             if (IsDemoStage(key))
             {
                 SetLayoutHeight(_bodyLayout, 110f);
                 SetLayoutHeight(_transcriptLayout, string.IsNullOrWhiteSpace(DebateLearningContent.GetStrategyForStage(key)) ? 610f : 560f);
+                SetLayoutHeight(_voicePracticeTranscriptLayout, 0f);
+                SetLayoutHeight(_voicePracticeStatusLayout, 0f);
+                SetLayoutHeight(_voicePracticeCompletedLayout, 0f);
                 SetLayoutHeight(_choiceButtonsLayout, 0f);
                 SetLayoutHeight(_rationaleButtonsLayout, 0f);
                 SetLayoutHeight(_navigationLayout, 46f);
@@ -1033,11 +1403,14 @@ namespace Game.Debate
 
             if (IsMicroPracticeStage(key))
             {
-                SetLayoutHeight(_bodyLayout, 780f);
+                SetLayoutHeight(_bodyLayout, IsVoicePracticeStage(key) ? 360f : 780f);
                 SetLayoutHeight(_transcriptLayout, 0f);
+                SetLayoutHeight(_voicePracticeTranscriptLayout, IsVoicePracticeStage(key) ? 190f : 0f);
+                SetLayoutHeight(_voicePracticeStatusLayout, IsVoicePracticeStage(key) ? 54f : 0f);
+                SetLayoutHeight(_voicePracticeCompletedLayout, IsVoicePracticeStage(key) ? 54f : 0f);
                 SetLayoutHeight(_choiceButtonsLayout, 0f);
                 SetLayoutHeight(_rationaleButtonsLayout, 0f);
-                SetLayoutHeight(_navigationLayout, 46f);
+                SetLayoutHeight(_navigationLayout, 0f);
                 return;
             }
 
@@ -1047,15 +1420,18 @@ namespace Game.Debate
                 SetLayoutHeight(_transcriptLayout, 0f);
                 SetLayoutHeight(_choiceButtonsLayout, 0f);
                 SetLayoutHeight(_rationaleButtonsLayout, 0f);
-                SetLayoutHeight(_navigationLayout, 46f);
+                SetLayoutHeight(_navigationLayout, 0f);
                 return;
             }
 
             SetLayoutHeight(_bodyLayout, key == DebateLearningStageKey.WarmUp ? 650f : 780f);
             SetLayoutHeight(_transcriptLayout, 0f);
+            SetLayoutHeight(_voicePracticeTranscriptLayout, 0f);
+            SetLayoutHeight(_voicePracticeStatusLayout, 0f);
+            SetLayoutHeight(_voicePracticeCompletedLayout, 0f);
             SetLayoutHeight(_choiceButtonsLayout, 0f);
             SetLayoutHeight(_rationaleButtonsLayout, 0f);
-            SetLayoutHeight(_navigationLayout, 46f);
+            SetLayoutHeight(_navigationLayout, 0f);
         }
 
         private static bool IsDemoStage(DebateLearningStageKey key)
@@ -1068,6 +1444,358 @@ namespace Game.Debate
             return key is DebateLearningStageKey.MicroPracticeSpotMissing
                 or DebateLearningStageKey.MicroPracticeOneSentence
                 or DebateLearningStageKey.MicroPracticeStrategyTry;
+        }
+
+        private static bool IsVoicePracticeStage(DebateLearningStageKey key)
+        {
+            return key == DebateLearningStageKey.MicroPracticeOneSentence;
+        }
+
+        private bool IsVoicePracticeInputBlocked()
+        {
+            return _voicePracticeRecording || _voicePracticeAwaitingTranscript;
+        }
+
+        private int FindFirstUnfinishedVoicePracticeStep()
+        {
+            for (int i = 0; i < _voicePracticeConfirmed.Length; i++)
+            {
+                if (!_voicePracticeConfirmed[i])
+                {
+                    return i;
+                }
+            }
+
+            return _voicePracticeConfirmed.Length - 1;
+        }
+
+        private void ToggleVoicePracticeRecording()
+        {
+            if (IsVoicePracticeInputBlocked() && !_voicePracticeRecording)
+            {
+                return;
+            }
+
+            if (_voicePracticeRecording)
+            {
+                StopVoicePracticeRecording();
+            }
+            else
+            {
+                StartVoicePracticeRecording();
+            }
+        }
+
+        private void StartVoicePracticeRecording()
+        {
+            if (_voicePracticeStepIndex < 0 || _voicePracticeStepIndex >= _voicePracticeTranscripts.Length ||
+                _voicePracticeConfirmed[_voicePracticeStepIndex])
+            {
+                return;
+            }
+
+            if (primaryDemoNPC == null)
+            {
+                SetVoicePracticeRetryStatus("Practice NPC is unavailable. Press T to retry.");
+                return;
+            }
+
+            if (MicrophoneManager.Instance == null || !MicrophoneManager.Instance.HasAnyMicrophoneDevices())
+            {
+                SetVoicePracticeRetryStatus("No microphone is available. Press T to retry.");
+                return;
+            }
+
+            try
+            {
+                PrepareVoicePracticeRerecord();
+                SilenceConvaiAgentResponse(primaryDemoNPC);
+                _voicePracticeRetryStatus = string.Empty;
+                _voicePracticeRecording = true;
+                _voicePracticeAwaitingTranscript = false;
+                ConvaiNPCManager.Instance?.SetActiveConvaiNPC(primaryDemoNPC);
+                primaryDemoNPC.StartListening();
+                RenderVoicePractice();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("CREEI voice practice recording could not start: " + exception.Message);
+                SetVoicePracticeRetryStatus("Recording could not start. Press T to retry.");
+            }
+        }
+
+        private void StopVoicePracticeRecording()
+        {
+            if (!_voicePracticeRecording)
+            {
+                return;
+            }
+
+            _voicePracticeRecording = false;
+            _voicePracticeAwaitingTranscript = true;
+            _voicePracticeAwaitingSince = Time.unscaledTime;
+            try
+            {
+                primaryDemoNPC?.StopListening();
+                SilenceConvaiAgentResponse(primaryDemoNPC);
+                _voicePracticeRetryStatus = string.Empty;
+                RenderVoicePractice();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("CREEI voice practice recording stream could not stop: " + exception.Message);
+                SetVoicePracticeRetryStatus("The recording stream failed. Press T to retry.");
+            }
+        }
+
+        private void PrepareVoicePracticeRerecord()
+        {
+            if (!string.IsNullOrWhiteSpace(_voicePracticeTranscripts[_voicePracticeStepIndex]))
+            {
+                _voicePracticeRerecordCounts[_voicePracticeStepIndex]++;
+                _metrics.RecordMicroPractice2Rerecord();
+                _voicePracticeTranscripts[_voicePracticeStepIndex] = string.Empty;
+            }
+        }
+
+        private bool TryHandleVoicePracticeTranscript(string transcript)
+        {
+            if (!IsVoicePracticeStage(CurrentStage.Key) || !_voicePracticeAwaitingTranscript)
+            {
+                return false;
+            }
+
+            string safeTranscript = transcript?.Trim() ?? string.Empty;
+            _voicePracticeAwaitingTranscript = false;
+            _voicePracticeRecording = false;
+            if (string.IsNullOrWhiteSpace(safeTranscript))
+            {
+                SetVoicePracticeRetryStatus("No speech was detected. Press T to retry.");
+                return true;
+            }
+
+            _voicePracticeRetryStatus = string.Empty;
+            _voicePracticeTranscripts[_voicePracticeStepIndex] = safeTranscript;
+            SilenceConvaiAgentResponse(primaryDemoNPC);
+            RenderVoicePractice();
+            UpdateVoicePracticeControls();
+            return true;
+        }
+
+        private void UpdateVoicePracticeTimeout()
+        {
+            if (!IsVoicePracticeStage(CurrentStage.Key) || !_voicePracticeAwaitingTranscript)
+            {
+                return;
+            }
+
+            if (Time.unscaledTime - _voicePracticeAwaitingSince >= VoicePracticeTranscriptTimeoutSeconds)
+            {
+                SetVoicePracticeRetryStatus("No final transcript arrived. Press T to retry.");
+            }
+        }
+
+        private void SetVoicePracticeRetryStatus(string status)
+        {
+            _voicePracticeRecording = false;
+            _voicePracticeAwaitingTranscript = false;
+            _voicePracticeRetryStatus = status ?? string.Empty;
+            RenderVoicePractice();
+            UpdateVoicePracticeControls();
+        }
+
+        private void ConfirmVoicePracticeStep()
+        {
+            if (IsVoicePracticeInputBlocked())
+            {
+                return;
+            }
+
+            string transcript = _voicePracticeTranscripts[_voicePracticeStepIndex];
+            if (string.IsNullOrWhiteSpace(transcript))
+            {
+                return;
+            }
+
+            CreeiPartKey part = DebateLearningContent.CreeiVoicePracticePrompts[_voicePracticeStepIndex].Part;
+            _metrics.RecordMicroPractice2ConfirmedPart(part, transcript);
+            _voicePracticeConfirmed[_voicePracticeStepIndex] = true;
+
+            if (_voicePracticeConfirmed.All(confirmed => confirmed))
+            {
+                AdvanceToNextStage();
+                return;
+            }
+
+            _voicePracticeStepIndex = FindFirstUnfinishedVoicePracticeStep();
+            RenderVoicePractice();
+            UpdateVoicePracticeControls();
+        }
+
+        private void RenderVoicePractice()
+        {
+            if (_voicePracticeTranscriptText == null || !IsVoicePracticeStage(CurrentStage.Key))
+            {
+                return;
+            }
+
+            CreeiVoicePracticePrompt prompt = DebateLearningContent.CreeiVoicePracticePrompts[_voicePracticeStepIndex];
+            _progressText.text = $"CREEI Step {_voicePracticeStepIndex + 1} / {DebateLearningContent.CreeiVoicePracticePrompts.Length}";
+            _titleText.text = $"Micro Practice 2: {prompt.Title}";
+            _bodyText.text = "Debate topic\n" + DebateLearningContent.CreeiVoicePracticeTopic + "\n\n" + prompt.Prompt;
+
+            string transcript = _voicePracticeTranscripts[_voicePracticeStepIndex];
+            _voicePracticeTranscriptText.text = string.IsNullOrWhiteSpace(transcript)
+                ? "Transcript (read-only):\n—"
+                : "Transcript (read-only):\n" + transcript;
+
+            if (_voicePracticeRecording)
+            {
+                _voicePracticeStatusText.text = "Listening... Press T to stop.";
+            }
+            else if (_voicePracticeAwaitingTranscript)
+            {
+                _voicePracticeStatusText.text = "Transcribing...";
+            }
+            else if (!string.IsNullOrWhiteSpace(_voicePracticeRetryStatus))
+            {
+                _voicePracticeStatusText.text = _voicePracticeRetryStatus;
+            }
+            else if (string.IsNullOrWhiteSpace(transcript))
+            {
+                _voicePracticeStatusText.text = "Press T to start speaking.";
+            }
+            else
+            {
+                _voicePracticeStatusText.text = "Transcript ready. Press Right Arrow to continue.";
+            }
+
+            List<string> completed = new();
+            for (int i = 0; i < _voicePracticeConfirmed.Length; i++)
+            {
+                if (_voicePracticeConfirmed[i])
+                {
+                    completed.Add(DebateLearningContent.CreeiVoicePracticePrompts[i].Title);
+                }
+            }
+
+            _voicePracticeCompletedText.text = completed.Count == 0
+                ? "Completed: none"
+                : "Completed: " + string.Join(", ", completed);
+        }
+
+        private void RegisterTutorialInputIsolation()
+        {
+            if (!Application.isPlaying)
+            {
+                return;
+            }
+
+            ConvaiGRPCAPI.TryHandleUserVoiceTranscript = TryHandleTutorialVoiceTranscript;
+            ConvaiGRPCAPI.ShouldSuppressVoiceResponse = ShouldSuppressTutorialVoiceResponse;
+            ConvaiInputManager.ShouldSuppressTalkInput = ShouldSuppressTutorialTalkInput;
+            ConvaiPlayerInteractionManager.TryHandleTextSubmission = TryHandleTutorialTextSubmission;
+            ConvaiPlayerInteractionManager.ShouldSuppressChatToggle = ShouldSuppressTutorialTalkInput;
+            ConvaiPlayerInteractionManager.ShouldSuppressTalkInput = ShouldSuppressTutorialTalkInput;
+            ConvaiPlayerInteractionManager.ShouldSuppressNpcInteraction = ShouldSuppressTutorialTalkInput;
+            ConvaiNPCManager.ShouldSuppressAutoActiveNPCUpdate = ShouldSuppressVoicePracticeAutoActiveNpcUpdate;
+        }
+
+        private void UnregisterTutorialInputIsolation()
+        {
+            if (ConvaiGRPCAPI.TryHandleUserVoiceTranscript == (Func<string, bool>)TryHandleTutorialVoiceTranscript)
+            {
+                ConvaiGRPCAPI.TryHandleUserVoiceTranscript = null;
+            }
+
+            if (ConvaiGRPCAPI.ShouldSuppressVoiceResponse == (Func<bool>)ShouldSuppressTutorialVoiceResponse)
+            {
+                ConvaiGRPCAPI.ShouldSuppressVoiceResponse = null;
+                ConvaiGRPCAPI.Instance?.ResetVoiceResponseSuppression();
+            }
+
+            if (ConvaiInputManager.ShouldSuppressTalkInput == (Func<bool>)ShouldSuppressTutorialTalkInput)
+            {
+                ConvaiInputManager.ShouldSuppressTalkInput = null;
+            }
+
+            if (ConvaiPlayerInteractionManager.TryHandleTextSubmission == (Func<string, bool>)TryHandleTutorialTextSubmission)
+            {
+                ConvaiPlayerInteractionManager.TryHandleTextSubmission = null;
+            }
+
+            if (ConvaiPlayerInteractionManager.ShouldSuppressChatToggle == (Func<bool>)ShouldSuppressTutorialTalkInput)
+            {
+                ConvaiPlayerInteractionManager.ShouldSuppressChatToggle = null;
+            }
+
+            if (ConvaiPlayerInteractionManager.ShouldSuppressTalkInput == (Func<bool>)ShouldSuppressTutorialTalkInput)
+            {
+                ConvaiPlayerInteractionManager.ShouldSuppressTalkInput = null;
+            }
+
+            if (ConvaiPlayerInteractionManager.ShouldSuppressNpcInteraction == (Func<bool>)ShouldSuppressTutorialTalkInput)
+            {
+                ConvaiPlayerInteractionManager.ShouldSuppressNpcInteraction = null;
+            }
+
+            if (ConvaiNPCManager.ShouldSuppressAutoActiveNPCUpdate == (Func<bool>)ShouldSuppressVoicePracticeAutoActiveNpcUpdate)
+            {
+                ConvaiNPCManager.ShouldSuppressAutoActiveNPCUpdate = null;
+            }
+        }
+
+        private bool TryHandleTutorialVoiceTranscript(string transcript)
+        {
+            if (!IsTutorialActive())
+            {
+                return false;
+            }
+
+            if (IsVoicePracticeStage(CurrentStage.Key) && _voicePracticeAwaitingTranscript)
+            {
+                TryHandleVoicePracticeTranscript(transcript);
+            }
+
+            return true;
+        }
+
+        private bool TryHandleTutorialTextSubmission(string text)
+        {
+            return IsTutorialActive();
+        }
+
+        private bool ShouldSuppressTutorialTalkInput()
+        {
+            return IsTutorialActive();
+        }
+
+        private bool ShouldSuppressTutorialVoiceResponse()
+        {
+            return IsTutorialActive();
+        }
+
+        private static void SilenceConvaiAgentResponse(ConvaiNPC npc)
+        {
+            if (npc == null)
+            {
+                return;
+            }
+
+            npc.StopAllAudioPlayback();
+            npc.ClearResponseQueue();
+            npc.StopLipSync();
+            npc.ResetCharacterAnimation();
+        }
+
+        private bool IsTutorialActive()
+        {
+            return enabled && _started && !_completed;
+        }
+
+        private bool ShouldSuppressVoicePracticeAutoActiveNpcUpdate()
+        {
+            return IsTutorialActive() && IsVoicePracticeStage(CurrentStage.Key);
         }
 
         private void SetChoiceButtons(string[] options, System.Action<string> onSelected)
@@ -1152,6 +1880,84 @@ namespace Game.Debate
             return string.IsNullOrWhiteSpace(strategy)
                 ? string.Empty
                 : $"Current Strategy: {strategy}";
+        }
+
+        private static void CreateKeyboardNavigationHint(Transform parent)
+        {
+            GameObject hintRoot = CreateRect("Learning Keyboard Hint", parent);
+            Image hintBackground = hintRoot.AddComponent<Image>();
+            hintBackground.color = new Color(0.86f, 0.89f, 0.89f, 0.96f);
+            hintBackground.raycastTarget = false;
+
+            HorizontalLayoutGroup hintLayout = hintRoot.AddComponent<HorizontalLayoutGroup>();
+            hintLayout.padding = new RectOffset(18, 18, 8, 8);
+            hintLayout.spacing = 42f;
+            hintLayout.childAlignment = TextAnchor.MiddleCenter;
+            hintLayout.childControlHeight = true;
+            hintLayout.childControlWidth = true;
+            hintLayout.childForceExpandHeight = true;
+            hintLayout.childForceExpandWidth = true;
+
+            LayoutElement rootLayout = hintRoot.AddComponent<LayoutElement>();
+            rootLayout.preferredHeight = 96f;
+            rootLayout.minHeight = 96f;
+
+            CreateKeyboardHintItem(hintRoot.transform, "\u2190", "Previous");
+            CreateKeyboardHintItem(hintRoot.transform, "\u2192", "Next / Confirm");
+        }
+
+        private static void CreateKeyboardHintItem(Transform parent, string keySymbol, string label)
+        {
+            GameObject item = CreateRect(label + " Hint", parent);
+            HorizontalLayoutGroup itemLayout = item.AddComponent<HorizontalLayoutGroup>();
+            itemLayout.spacing = 14f;
+            itemLayout.childAlignment = TextAnchor.MiddleCenter;
+            itemLayout.childControlHeight = true;
+            itemLayout.childControlWidth = true;
+            itemLayout.childForceExpandHeight = false;
+            itemLayout.childForceExpandWidth = false;
+
+            LayoutElement itemSize = item.AddComponent<LayoutElement>();
+            itemSize.flexibleWidth = 1f;
+            itemSize.preferredHeight = 76f;
+
+            GameObject keycap = CreateRect(keySymbol + " Keycap", item.transform);
+            Image keycapImage = keycap.AddComponent<Image>();
+            keycapImage.color = new Color(0.12f, 0.17f, 0.19f, 1f);
+            keycapImage.raycastTarget = false;
+
+            LayoutElement keycapSize = keycap.AddComponent<LayoutElement>();
+            keycapSize.preferredWidth = 88f;
+            keycapSize.minWidth = 88f;
+            keycapSize.preferredHeight = 70f;
+            keycapSize.minHeight = 70f;
+
+            GameObject glyph = CreateRect("Key Glyph", keycap.transform);
+            RectTransform glyphRect = glyph.GetComponent<RectTransform>();
+            glyphRect.anchorMin = Vector2.zero;
+            glyphRect.anchorMax = Vector2.one;
+            glyphRect.offsetMin = Vector2.zero;
+            glyphRect.offsetMax = Vector2.zero;
+
+            TMP_Text keyText = glyph.AddComponent<TextMeshProUGUI>();
+            keyText.text = keySymbol;
+            keyText.fontSize = 42f;
+            keyText.fontStyle = FontStyles.Bold;
+            keyText.color = Color.white;
+            keyText.alignment = TextAlignmentOptions.Center;
+            keyText.raycastTarget = false;
+
+            TMP_Text labelText = CreateText(
+                item.transform,
+                label,
+                36,
+                FontStyles.Bold,
+                70f,
+                new Color(0.10f, 0.16f, 0.18f));
+            labelText.alignment = TextAlignmentOptions.MidlineLeft;
+            LayoutElement labelSize = labelText.GetComponent<LayoutElement>();
+            labelSize.preferredWidth = 320f;
+            labelSize.minWidth = 280f;
         }
 
         private void SetLearningCursor(bool visible)
@@ -1323,8 +2129,6 @@ namespace Game.Debate
 
     internal static class NpcDebateLearningRuntimeWatcher
     {
-        private const string TargetSceneName = "Level_NPCVsNPCDebate";
-
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Initialize()
         {
@@ -1340,17 +2144,17 @@ namespace Game.Debate
 
         private static void AttachIfNeeded(Scene scene)
         {
-            if (scene.name != TargetSceneName)
+            if (!NpcDebateLearningPhaseController.IsTargetSceneName(scene.name))
             {
                 return;
             }
 
-            if (Object.FindAnyObjectByType<NpcDebateLearningPhaseController>() != null)
+            if (UnityEngine.Object.FindAnyObjectByType<NpcDebateLearningPhaseController>() != null)
             {
                 return;
             }
 
-            NpcDebateRoundManager roundManager = Object.FindAnyObjectByType<NpcDebateRoundManager>();
+            NpcDebateRoundManager roundManager = UnityEngine.Object.FindAnyObjectByType<NpcDebateRoundManager>();
             GameObject watcherObject = new("NPC Debate Learning Phase Runtime Watcher");
             NpcDebateLearningPhaseController controller = watcherObject.AddComponent<NpcDebateLearningPhaseController>();
             controller.Configure(roundManager);

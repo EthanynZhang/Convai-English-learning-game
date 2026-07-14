@@ -29,6 +29,15 @@ namespace Game.Debate
         MicroPractice
     }
 
+    public enum CreeiPartKey
+    {
+        Claim,
+        Reason,
+        Evidence,
+        Explanation,
+        Impact
+    }
+
     public readonly struct CreeiPart
     {
         public CreeiPart(string label, string text)
@@ -39,6 +48,20 @@ namespace Game.Debate
 
         public string Label { get; }
         public string Text { get; }
+    }
+
+    public readonly struct CreeiVoicePracticePrompt
+    {
+        public CreeiVoicePracticePrompt(CreeiPartKey part, string title, string prompt)
+        {
+            Part = part;
+            Title = title;
+            Prompt = prompt;
+        }
+
+        public CreeiPartKey Part { get; }
+        public string Title { get; }
+        public string Prompt { get; }
     }
 
     public readonly struct DemoDialogueLine
@@ -93,7 +116,7 @@ namespace Game.Debate
         public const float SpotMissingPracticeSeconds = 60f;
         public const float CreeiDialogueDemoSeconds = 120f;
         public const float CreeiStructureSeconds = 30f;
-        public const float OneSentencePracticeSeconds = 90f;
+        public const float OneSentencePracticeSeconds = 240f;
         public const float StrategyReadingSeconds = 90f;
         public const float StrategyDialogueDemoSeconds = 40f;
         public const float StrategyDemoSeconds = StrategyDialogueDemoSeconds * 3f;
@@ -103,11 +126,43 @@ namespace Game.Debate
 
         public static readonly CreeiPart[] CreeiParts =
         {
-            new("Claim", "Claim: state your position clearly in one sentence."),
-            new("Reason", "Reason: explain why the claim makes sense."),
-            new("Evidence", "Evidence: support the reason with a fact, example, observation, or experience."),
-            new("Explanation", "Explanation: connect the evidence back to the reason instead of leaving it alone."),
-            new("Impact", "Impact: show why the point matters for learners, teachers, or the final decision.")
+            new("Claim", "State your position clearly in one sentence."),
+            new("Reason", "Explain why the claim makes sense."),
+            new("Evidence", "Support the reason with a fact, example, observation, or experience."),
+            new("Explanation", "Connect the evidence back to the reason instead of leaving it alone."),
+            new("Impact", "Show why the point matters for learners, teachers, or the final decision.")
+        };
+
+        public const string PracticeDebateTopic =
+            "Reading and speaking, which is more important in learning English?";
+
+        public const string PracticeStance =
+            "Speaking is more important for learning English.";
+
+        public const string CreeiVoicePracticeTopic = PracticeDebateTopic;
+
+        public static readonly CreeiVoicePracticePrompt[] CreeiVoicePracticePrompts =
+        {
+            new(
+                CreeiPartKey.Claim,
+                "Claim",
+                "State this position in one clear sentence: Speaking is more important for learning English."),
+            new(
+                CreeiPartKey.Reason,
+                "Reason",
+                "Give one reason why speaking is more important for learning English."),
+            new(
+                CreeiPartKey.Evidence,
+                "Evidence",
+                "Give one fact, example, observation, or personal experience that shows how speaking practice helps English learners."),
+            new(
+                CreeiPartKey.Explanation,
+                "Explanation",
+                "Explain how your evidence shows that speaking turns language knowledge into practical communication."),
+            new(
+                CreeiPartKey.Impact,
+                "Impact",
+                "Explain why stronger speaking ability matters for learners in real communication.")
         };
 
         public static readonly string[] StrategyNames =
@@ -128,36 +183,34 @@ namespace Game.Debate
             string.Join("\n", Array.ConvertAll(CreeiParts, part => $"{part.Label}: {part.Text}"));
 
         public static string CreeiDemoTranscript =>
-            "Reading is more important for learning English because it gives learners the language input they need before they speak. " +
-            "For example, students who read short articles every day meet useful words and sentence patterns many times. " +
-            "This repeated input helps them understand how English works, so their speaking becomes clearer and more accurate. " +
-            "That matters because confident speaking usually grows from a strong base of words, ideas, and grammar.";
+            "Speaking is more important for learning English because it turns passive knowledge into active communication. " +
+            "For example, learners in a conversation club must retrieve words, form sentences, listen, and respond in real time. " +
+            "This active use reveals gaps and gives learners immediate chances to adjust their pronunciation and word choice. " +
+            "That matters because learners need confidence and practical speaking ability to communicate outside the classroom.";
 
         public static string CreeiStructureText =>
-            "Claim: Reading is more important for learning English.\n" +
-            "Reason: It gives learners language input before they speak.\n" +
-            "Evidence: Students who read short articles every day meet useful words and sentence patterns many times.\n" +
-            "Explanation: Repeated input helps learners understand how English works, so their speaking becomes clearer and more accurate.\n" +
-            "Impact: Confident speaking grows from a strong base of words, ideas, and grammar.";
+            "Claim: Speaking is more important for learning English.\n" +
+            "Reason: It turns language knowledge into active communication.\n" +
+            "Evidence: In conversation practice, learners retrieve words, form sentences, listen, and respond in real time.\n" +
+            "Explanation: Active use reveals gaps and lets learners adjust their pronunciation and word choice immediately.\n" +
+            "Impact: Learners gain the confidence and practical ability needed for communication outside the classroom.";
 
         public static string SpotMissingPracticeText =>
-            "Micro Practice 1: Spot the missing CREEI part.\n\n" +
-            "Students should be allowed to use AI tools with clear rules.\n" +
-            "AI can help them organize ideas before writing.\n" +
-            "For example, a student can use AI to brainstorm an outline.\n\n" +
+            "Speaking should be the central activity in English learning.\n" +
+            "It requires learners to retrieve and use language actively.\n" +
+            "For example, a learner in a conversation club must listen and respond without reading a prepared answer.\n\n" +
             "Think silently: what is still missing? Does the argument need an Explanation, an Impact, or both?";
 
         public static string SpotMissingFeedback =>
-            "This argument needs Explanation first: the speaker should explain why brainstorming an outline supports learning rather than replacing learning.";
+            "This argument needs Explanation first: the speaker should explain how real-time listening and responding turns language knowledge into practical speaking ability.";
 
         public static string OneSentenceTryText =>
-            "Micro Practice 2: One sentence try.\n\n" +
-            "Complete the sentence with one useful CREEI connection.\n\n" +
-            "This means that __________.\n\n" +
-            "Think of one sentence in your mind. If this later becomes a voice-input activity, this is where the learner can say one short completion.";
+            "You will speak five required sentences: one each for Claim, Reason, Evidence, Explanation, and Impact.\n\n" +
+            "Debate topic\n" + CreeiVoicePracticeTopic + "\n\n" +
+            "Press T to start speaking. Press T again to stop. Your transcript will appear here before you confirm each step.";
 
         public static string OneSentenceTryFeedback =>
-            "Standard example: This means that AI can support the learning process when students still make the final decisions and do the real writing.";
+            "Standard example: This means that speaking practice helps learners retrieve language quickly, notice gaps, and communicate with greater confidence.";
 
         public static string StrategyReadingText =>
             "Three persuasive strategies can strengthen an argument.\n\n" +
@@ -166,48 +219,47 @@ namespace Game.Debate
             "Pathos uses emotion, empathy, pressure, hopes, fears, and human consequences.";
 
         public static string StrategyMiniTryText =>
-            "Micro Practice 3: Strategy mini-try.\n\n" +
-            "Choose one strategy and complete one sentence.\n\n" +
-            "Logos: This policy is practical because __________.\n" +
-            "Ethos: A responsible university should __________.\n" +
-            "Pathos: Many students feel __________, so __________.\n\n" +
+            "Use the topic: Speaking is more important for learning English.\n\n" +
+            "Logos: Speaking practice is effective because __________.\n" +
+            "Ethos: A responsible English learner should __________.\n" +
+            "Pathos: Many learners feel __________ when they cannot speak, so __________.\n\n" +
             "Think of one sentence. Do not choose an option here; just notice how the three sentence frames feel different.";
 
         public static readonly DemoDialogueLine[] CreeiDialogueLines =
         {
-            new("Anna", "Anna Reed", "I think reading is more important for learning English.", creeiPart: "Claim"),
-            new("Mike", "Mike Carter", "What is your reason? Speaking practice also matters."),
-            new("Anna", "Anna Reed", "My reason is that reading gives learners language input before they speak.", creeiPart: "Reason"),
+            new("Anna", "Anna Reed", "I think speaking is more important for learning English.", creeiPart: "Claim"),
+            new("Mike", "Mike Carter", "What is your reason? Reading also gives learners useful language input."),
+            new("Anna", "Anna Reed", "My reason is that speaking turns language knowledge into active communication.", creeiPart: "Reason"),
             new("Mike", "Mike Carter", "Can you give evidence for that point?"),
-            new("Anna", "Anna Reed", "Students who read short articles every day meet useful words and sentence patterns many times.", creeiPart: "Evidence"),
-            new("Mike", "Mike Carter", "So how does that evidence connect to speaking?"),
-            new("Anna", "Anna Reed", "Repeated input helps learners understand how English works, so their speaking becomes clearer and more accurate.", creeiPart: "Explanation"),
+            new("Anna", "Anna Reed", "In conversation practice, learners retrieve words, form sentences, listen, and respond in real time.", creeiPart: "Evidence"),
+            new("Mike", "Mike Carter", "How does that evidence support your claim?"),
+            new("Anna", "Anna Reed", "Active use reveals gaps and lets learners adjust their pronunciation and word choice immediately.", creeiPart: "Explanation"),
             new("Mike", "Mike Carter", "And why does this matter in the debate?"),
-            new("Anna", "Anna Reed", "It matters because confident speaking grows from a strong base of words, ideas, and grammar.", creeiPart: "Impact")
+            new("Anna", "Anna Reed", "It matters because learners need confidence and practical speaking ability for communication outside the classroom.", creeiPart: "Impact")
         };
 
         public static readonly DemoDialogueLine[] LogosDialogueLines =
         {
             new("Anna", "Anna Reed", "Logos means using clear logic, reasons, and evidence.", "Logos"),
             new("Mike", "Mike Carter", "Show me a Logos argument about reading and speaking.", "Logos"),
-            new("Anna", "Anna Reed", "Reading builds vocabulary and grammar input. When learners see patterns many times, they can organize spoken answers more accurately.", "Logos"),
-            new("Mike", "Mike Carter", "So the logic is input first, clearer output later.", "Logos")
+            new("Anna", "Anna Reed", "Speaking requires learners to retrieve vocabulary, form sentences, and respond in real time. Repeated practice therefore makes communication faster and more automatic.", "Logos"),
+            new("Mike", "Mike Carter", "So the logic is active retrieval first, more fluent communication later.", "Logos")
         };
 
         public static readonly DemoDialogueLine[] EthosDialogueLines =
         {
             new("Anna", "Anna Reed", "Ethos means sounding fair, responsible, and credible.", "Ethos"),
-            new("Mike", "Mike Carter", "How would Ethos support reading in this debate?", "Ethos"),
-            new("Anna", "Anna Reed", "A responsible learner should build a strong foundation before speaking quickly. Reading shows patience and respect for accurate communication.", "Ethos"),
-            new("Mike", "Mike Carter", "That sounds balanced because it values careful learning, not just fast performance.", "Ethos")
+            new("Mike", "Mike Carter", "How would Ethos support speaking in this debate?", "Ethos"),
+            new("Anna", "Anna Reed", "A responsible English program should give learners safe, regular chances to speak while still valuing reading as useful preparation.", "Ethos"),
+            new("Mike", "Mike Carter", "That sounds credible because it supports speaking without dismissing the value of reading.", "Ethos")
         };
 
         public static readonly DemoDialogueLine[] PathosDialogueLines =
         {
             new("Anna", "Anna Reed", "Pathos means using emotion and empathy in a controlled way.", "Pathos"),
-            new("Mike", "Mike Carter", "How can Pathos make the reading argument stronger?", "Pathos"),
-            new("Anna", "Anna Reed", "Many learners feel nervous when they speak without enough words. Reading gives them confidence, so they can join conversations without fear.", "Pathos"),
-            new("Mike", "Mike Carter", "That helps the audience care about how learners actually feel.", "Pathos")
+            new("Mike", "Mike Carter", "How can Pathos make the speaking argument stronger?", "Pathos"),
+            new("Anna", "Anna Reed", "Many learners know English on paper but feel silent and isolated in real conversations. Speaking practice helps them find their voice and connect with other people.", "Pathos"),
+            new("Mike", "Mike Carter", "That helps the audience care about the confidence and connection learners gain through speaking.", "Pathos")
         };
 
         public static readonly DebateLearningStageSpec[] StageSequence =
@@ -215,7 +267,7 @@ namespace Game.Debate
             new(
                 DebateLearningStageKey.WarmUp,
                 "Warm-up",
-                "Before the NPC debate, review how strong debate arguments are built. You will read a structure, watch a fixed demonstration, compare three strategy versions, then choose one strategy to take into the debate.",
+                "The debate topic is: Reading and speaking, which is more important in learning English? In this tutorial, you will practise building the position that speaking is more important. You will study CREEI, watch fixed demonstrations, and compare Logos, Ethos, and Pathos before the NPC debate begins.",
                 FramedWarmUpSeconds,
                 DebateLearningViewKind.Card),
             new(
@@ -233,7 +285,7 @@ namespace Game.Debate
             new(
                 DebateLearningStageKey.CreeiDialogueDemo,
                 "CREEI Dialogue Demo",
-                "Watch Anna and Mike demonstrate how a CREEI argument is built through dialogue.",
+                "Watch Anna and Mike build the argument through dialogue.",
                 CreeiDialogueDemoSeconds,
                 DebateLearningViewKind.Demo),
             new(
@@ -244,7 +296,7 @@ namespace Game.Debate
                 DebateLearningViewKind.Structure),
             new(
                 DebateLearningStageKey.MicroPracticeOneSentence,
-                "Micro Practice 2: One Sentence Try",
+                "Micro Practice 2: Build Your CREEI Argument",
                 OneSentenceTryText,
                 OneSentencePracticeSeconds,
                 DebateLearningViewKind.MicroPractice),
@@ -257,19 +309,19 @@ namespace Game.Debate
             new(
                 DebateLearningStageKey.LogosDialogueDemo,
                 "Logos Dialogue Demo",
-                "Watch a fixed Logos demonstration.",
+                "Watch Anna and Mike demonstrate this strategy using the same debate topic.",
                 StrategyDialogueDemoSeconds,
                 DebateLearningViewKind.Demo),
             new(
                 DebateLearningStageKey.EthosDialogueDemo,
                 "Ethos Dialogue Demo",
-                "Watch a fixed Ethos demonstration.",
+                "Watch Anna and Mike demonstrate this strategy using the same debate topic.",
                 StrategyDialogueDemoSeconds,
                 DebateLearningViewKind.Demo),
             new(
                 DebateLearningStageKey.PathosDialogueDemo,
                 "Pathos Dialogue Demo",
-                "Watch a fixed Pathos demonstration.",
+                "Watch Anna and Mike demonstrate this strategy using the same debate topic.",
                 StrategyDialogueDemoSeconds,
                 DebateLearningViewKind.Demo),
             new(
