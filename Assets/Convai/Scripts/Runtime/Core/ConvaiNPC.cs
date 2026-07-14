@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Convai.Scripts.Runtime.Addons;
 using Convai.Scripts.Runtime.Attributes;
 using Convai.Scripts.Runtime.Features;
@@ -31,7 +32,7 @@ namespace Convai.Scripts.Runtime.Core
         private const int AUDIO_SAMPLE_RATE = 44100;
         private const string GRPC_API_ENDPOINT = "stream.convai.com";
         private const int RECORDING_FREQUENCY = AUDIO_SAMPLE_RATE;
-        private const int RECORDING_LENGTH = 30;
+        private const int DEFAULT_MICROPHONE_BUFFER_SECONDS = 10;
         private static readonly int Talk = Animator.StringToHash("Talk");
 
         [Header("Character Information")]
@@ -360,6 +361,16 @@ namespace Convai.Scripts.Runtime.Core
         /// </summary>
         public async void StartListening()
         {
+            await StartListeningInternal(DEFAULT_MICROPHONE_BUFFER_SECONDS);
+        }
+
+        public async void StartListening(int recordingLengthSeconds)
+        {
+            await StartListeningInternal(Mathf.Max(1, recordingLengthSeconds));
+        }
+
+        private async Task StartListeningInternal(int recordingLengthSeconds)
+        {
             if (!MicrophoneManager.Instance.HasAnyMicrophoneDevices())
             {
                 NotificationSystemHandler.Instance.NotificationRequest(NotificationType.NoMicrophoneDetected);
@@ -367,7 +378,7 @@ namespace Convai.Scripts.Runtime.Core
             }
 
             await _grpcAPI.StartRecordAudio(_client, _isActionActive, _isLipSyncActive, RECORDING_FREQUENCY,
-                RECORDING_LENGTH, characterID, ActionConfig, FaceModel, SpeakerID);
+                recordingLengthSeconds, characterID, ActionConfig, FaceModel, SpeakerID);
         }
 
         /// <summary>

@@ -13,6 +13,18 @@ namespace Game.Debate
         [SerializeField] private Color revisedNpcTextColor = new(1f, 0.72f, 0.25f, 1f);
         [SerializeField] private Color learnerCommandTextColor = new(0.35f, 0.92f, 0.42f, 1f);
         [SerializeField] private Color coachTextColor = new(1f, 0.86f, 0.32f, 1f);
+        private bool _suppressConvaiTranscriptUi;
+
+        private void LateUpdate()
+        {
+            if (!_suppressConvaiTranscriptUi || UISaveLoadSystem.Instance == null ||
+                !UISaveLoadSystem.Instance.TranscriptUIActiveStatus)
+            {
+                return;
+            }
+
+            DisableAvailableTranscriptUis();
+        }
 
         public void PublishNpcLine(ConvaiGroupNPCController speaker, string transcript, bool isRevised)
         {
@@ -115,6 +127,34 @@ namespace Game.Debate
             currentUI.SendCharacterText(coachDisplayName, safeText, coachTextColor);
         }
 
+        public bool DisableConvaiTranscriptUi()
+        {
+            _suppressConvaiTranscriptUi = true;
+            return DisableAvailableTranscriptUis();
+        }
+
+        private bool DisableAvailableTranscriptUis()
+        {
+            ConvaiChatUIHandler handler = chatUIHandler != null ? chatUIHandler : ConvaiChatUIHandler.Instance;
+            if (handler == null)
+            {
+                Debug.LogWarning("InteractiveDebateTranscriptBridge could not disable the Convai transcript UI.");
+                return false;
+            }
+
+            if (UISaveLoadSystem.Instance != null)
+            {
+                UISaveLoadSystem.Instance.TranscriptUIActiveStatus = false;
+            }
+
+            foreach (IChatUI availableUI in handler.GetUIAppearances.Values)
+            {
+                availableUI?.DeactivateUI();
+            }
+
+            return true;
+        }
+
         public static string GetSpeakerDisplayName(string speakerName, bool isRevised)
         {
             string safeName = string.IsNullOrWhiteSpace(speakerName) ? "NPC" : speakerName.Trim();
@@ -130,7 +170,29 @@ namespace Game.Debate
         private IChatUI GetCurrentUI()
         {
             ConvaiChatUIHandler handler = chatUIHandler != null ? chatUIHandler : ConvaiChatUIHandler.Instance;
-            return handler == null ? null : handler.GetCurrentUI();
+            if (handler == null)
+            {
+                return null;
+            }
+
+            IChatUI currentUI = handler.GetCurrentUI();
+            if (currentUI != null)
+            {
+                return currentUI;
+            }
+
+            if (handler.GetUIAppearances.TryGetValue(ConvaiChatUIHandler.UIType.ChatBox, out IChatUI chatBoxUI))
+            {
+                handler.SetUIType(ConvaiChatUIHandler.UIType.ChatBox);
+                return chatBoxUI;
+            }
+
+            foreach (IChatUI availableUI in handler.GetUIAppearances.Values)
+            {
+                return availableUI;
+            }
+
+            return null;
         }
 
         private static string GetSpeakerName(ConvaiGroupNPCController speaker)

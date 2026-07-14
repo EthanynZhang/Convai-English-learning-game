@@ -253,9 +253,20 @@ namespace Convai.Scripts.Runtime.Core
                     $"SendTextData timed out or was cancelled before a Convai response was received. CharacterId={SafeCharacterId(characterID)}",
                     ConvaiLogger.LogCategory.Character);
             }
+            catch (RpcException rpcException) when (
+                rpcException.StatusCode == StatusCode.Unavailable ||
+                rpcException.StatusCode == StatusCode.DeadlineExceeded ||
+                rpcException.StatusCode == StatusCode.Cancelled)
+            {
+                string failure =
+                    $"Convai text delivery failed ({rpcException.StatusCode}): {rpcException.Status.Detail}";
+                ConvaiLogger.Warn(failure, ConvaiLogger.LogCategory.Character);
+                OnTextSendFailed?.Invoke(sendingNPC, failure);
+            }
             catch (Exception ex)
             {
                 ConvaiLogger.Error(ex, ConvaiLogger.LogCategory.Character);
+                OnTextSendFailed?.Invoke(sendingNPC, ex.Message);
             }
         }
 
@@ -311,6 +322,8 @@ namespace Convai.Scripts.Runtime.Core
         {
             _currentVoiceTranscriptHandled = false;
             _suppressCurrentVoiceResponse = ShouldSuppressVoiceResponse?.Invoke() == true;
+            _isFinalUserQueryTextBuffer = string.Empty;
+            _currentTranscript = null;
             AsyncDuplexStreamingCall<GetResponseRequest, GetResponseResponse> call = GetAsyncDuplexStreamingCallOptions(client);
 
             GetResponseRequest getResponseConfigRequest =
@@ -328,14 +341,27 @@ namespace Convai.Scripts.Runtime.Core
                 return; // early return on error
             }
 
-            AudioClip audioClip = Microphone.Start(MicrophoneManager.Instance.SelectedMicrophoneName, false, recordingLength, recordingFrequency);
+            int microphoneBufferSeconds = Mathf.Clamp(recordingLength, 1, 10);
+            AudioClip audioClip = Microphone.Start(
+                MicrophoneManager.Instance.SelectedMicrophoneName,
+                true,
+                microphoneBufferSeconds,
+                recordingFrequency);
 
             MicrophoneTestController.Instance.CheckMicrophoneDeviceWorkingStatus(audioClip);
 
             ConvaiLogger.Info(_activeConvaiNPC.characterName + " is now listening", ConvaiLogger.LogCategory.Character);
             OnPlayerSpeakingChanged?.Invoke(true);
 
-            await ProcessAudioContinuously(call, recordingFrequency, recordingLength, audioClip);
+            try
+            {
+                await ProcessAudioContinuously(call, recordingFrequency, microphoneBufferSeconds, audioClip);
+            }
+            catch (OperationCanceledException)
+            {
+                ConvaiLogger.Info("Voice recording stream ended after cancellation.",
+                    ConvaiLogger.LogCategory.Character);
+            }
         }
 
         private AsyncDuplexStreamingCall<GetResponseRequest, GetResponseResponse> GetAsyncDuplexStreamingCallOptions(ConvaiService.ConvaiServiceClient client)
@@ -422,7 +448,7 @@ namespace Convai.Scripts.Runtime.Core
         /// </summary>
         /// <param name="call">The streaming call to send audio data to the server.</param>
         /// <param name="recordingFrequency">The frequency at which the audio is recorded.</param>
-        /// <param name="recordingLength">The length of the audio recording in seconds.</param>
+        /// <param name="recordingLength">The size of the looping microphone buffer in seconds.</param>
         /// <param name="audioClip">The AudioClip object that contains the audio data from the microphone.</param>
         /// <returns>A task that represents the asynchronous operation of processing and sending audio data.</returns>
         private async Task ProcessAudioContinuously(AsyncDuplexStreamingCall<GetResponseRequest, GetResponseResponse> call, int recordingFrequency, int recordingLength,
@@ -443,33 +469,38 @@ namespace Convai.Scripts.Runtime.Core
                 }
 
                 int newPos = Microphone.GetPosition(MicrophoneManager.Instance.SelectedMicrophoneName);
-                int diff = newPos - pos;
+                if (newPos < 0)
+                {
+                    continue;
+                }
+
+                if (audioClip == null)
+                {
+                    try
+                    {
+                        _cancellationTokenSource?.Cancel();
+                    }
+                    catch (Exception e)
+                    {
+                        // Handle the Exception, which can occur if the CancellationTokenSource is already disposed.
+                        ConvaiLogger.Warn("Exception when Audio Clip is null: " + e.Message,
+                            ConvaiLogger.LogCategory.Character);
+                    }
+                    finally
+                    {
+                        _cancellationTokenSource?.Dispose();
+                        _cancellationTokenSource = null;
+                        ConvaiLogger.Info("The Cancellation Token Source was Disposed because the Audio Clip was empty.",
+                            ConvaiLogger.LogCategory.Character);
+                    }
+
+                    break;
+                }
+
+                int diff = GetRingBufferDistance(pos, newPos, audioClip.samples);
 
                 if (diff > 0)
                 {
-                    if (audioClip == null)
-                    {
-                        try
-                        {
-                            _cancellationTokenSource?.Cancel();
-                        }
-                        catch (Exception e)
-                        {
-                            // Handle the Exception, which can occur if the CancellationTokenSource is already disposed. 
-                            ConvaiLogger.Warn("Exception when Audio Clip is null: " + e.Message,
-                                ConvaiLogger.LogCategory.Character);
-                        }
-                        finally
-                        {
-                            _cancellationTokenSource?.Dispose();
-                            _cancellationTokenSource = null;
-                            ConvaiLogger.Info("The Cancellation Token Source was Disposed because the Audio Clip was empty.",
-                                ConvaiLogger.LogCategory.Character);
-                        }
-
-                        break;
-                    }
-
                     audioClip.GetData(audioData, pos);
                     if (!await ProcessAudioChunk(call, diff, audioData))
                     {
@@ -483,20 +514,42 @@ namespace Convai.Scripts.Runtime.Core
             // Process any remaining audio data.
             if (!_currentVoiceTranscriptHandled)
             {
-                await ProcessAudioChunk(call,
-                    Microphone.GetPosition(MicrophoneManager.Instance.SelectedMicrophoneName) - pos,
-                    audioData).ConfigureAwait(false);
+                int finalPos = Microphone.GetPosition(MicrophoneManager.Instance.SelectedMicrophoneName);
+                if (finalPos >= 0)
+                {
+                    await ProcessAudioChunk(
+                        call,
+                        GetRingBufferDistance(pos, finalPos, audioClip.samples),
+                        audioData).ConfigureAwait(false);
+                }
             }
 
             try
             {
                 await call.RequestStream.CompleteAsync();
             }
+            catch (OperationCanceledException)
+            {
+                ConvaiLogger.Info("Voice stream completion was cancelled because recording ended.",
+                    ConvaiLogger.LogCategory.Character);
+            }
             catch (RpcException rpcException) when (IsRecoverableClosedStream(rpcException))
             {
                 ConvaiLogger.Warn($"Voice stream already closed while completing microphone upload: {rpcException.Status.Detail}",
                     ConvaiLogger.LogCategory.Character);
             }
+        }
+
+        private static int GetRingBufferDistance(int previousPosition, int currentPosition, int sampleCount)
+        {
+            if (sampleCount <= 0 || previousPosition < 0 || currentPosition < 0)
+            {
+                return 0;
+            }
+
+            return currentPosition >= previousPosition
+                ? currentPosition - previousPosition
+                : sampleCount - previousPosition + currentPosition;
         }
 
         /// <summary>
@@ -581,6 +634,12 @@ namespace Convai.Scripts.Runtime.Core
                         default:
                             throw;
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    ConvaiLogger.Info("Voice stream was cancelled while sending microphone audio.",
+                        ConvaiLogger.LogCategory.Character);
+                    return false;
                 }
                 catch (Exception ex)
                 {
@@ -687,7 +746,7 @@ namespace Convai.Scripts.Runtime.Core
                     OnResultReceived?.Invoke(result);
                     ProcessCharacterEmotion(result, npc);
                     ProcessUserQuery(result);
-                    if (!_suppressCurrentVoiceResponse)
+                    if (!_suppressCurrentVoiceResponse && ShouldSuppressVoiceResponse?.Invoke() != true)
                     {
                         ProcessBtResponse(result, npc);
                         ProcessActionResponse(result, npc);
@@ -747,7 +806,7 @@ namespace Convai.Scripts.Runtime.Core
                     OnResultReceived?.Invoke(result);
                     ProcessCharacterEmotion(result, npc);
                     ProcessUserQuery(result);
-                    if (!_suppressCurrentVoiceResponse)
+                    if (!_suppressCurrentVoiceResponse && ShouldSuppressVoiceResponse?.Invoke() != true)
                     {
                         ProcessBtResponse(result, npc);
                         ProcessActionResponse(result, npc);
@@ -797,12 +856,18 @@ namespace Convai.Scripts.Runtime.Core
         {
             if (result.UserQuery != null)
             {
-                _currentTranscript = _isFinalUserQueryTextBuffer + result.UserQuery.TextData;
-                if (result.UserQuery.IsFinal) _isFinalUserQueryTextBuffer += result.UserQuery.TextData;
+                string textData = result.UserQuery.TextData ?? string.Empty;
+                _currentTranscript = CombineTranscript(_isFinalUserQueryTextBuffer, textData);
+                if (result.UserQuery.IsFinal)
+                {
+                    _isFinalUserQueryTextBuffer = CombineTranscript(_isFinalUserQueryTextBuffer, textData);
+                }
 
                 if (result.UserQuery.EndOfResponse)
                 {
-                    string finalTranscript = _isFinalUserQueryTextBuffer.Trim();
+                    string finalTranscript = result.UserQuery.IsFinal
+                        ? _isFinalUserQueryTextBuffer.Trim()
+                        : CombineTranscript(_isFinalUserQueryTextBuffer, textData).Trim();
                     if (!string.IsNullOrWhiteSpace(finalTranscript) &&
                         TryHandleUserVoiceTranscript?.Invoke(finalTranscript) == true)
                     {
@@ -824,6 +889,23 @@ namespace Convai.Scripts.Runtime.Core
         {
             _currentVoiceTranscriptHandled = false;
             _suppressCurrentVoiceResponse = false;
+        }
+
+        private static string CombineTranscript(string existingText, string nextChunk)
+        {
+            string existing = existingText?.Trim() ?? string.Empty;
+            string next = nextChunk?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(existing))
+            {
+                return next;
+            }
+
+            if (string.IsNullOrWhiteSpace(next))
+            {
+                return existing;
+            }
+
+            return existing + " " + next;
         }
 
 
@@ -1022,6 +1104,7 @@ namespace Convai.Scripts.Runtime.Core
         public event Action CharacterInterrupted; // Event to notify when the character's speech is interrupted
         public event Action<GetResponseResponse> OnResultReceived; // Event to notify when a response is received from the server
         public event Action<bool> OnPlayerSpeakingChanged; // Event to notify when the player starts or stops speaking
+        public event Action<ConvaiNPC, string> OnTextSendFailed;
 
         #endregion
     }

@@ -36,7 +36,10 @@ namespace Game.Debate
             string apiKey = DebateCommandParser.ResolveApiKey(_apiKeyOverride);
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                onComplete?.Invoke(BuildLocalFallback(safeRequest));
+                CoachFeedbackResult fallback = BuildLocalFallback(safeRequest);
+                fallback.DebugInfo = "API key missing: GPT was not called. Check the OpenAI API key source used by this scene.";
+                fallback.RawJson = "No HTTP request was made because the API key resolved to an empty value.";
+                onComplete?.Invoke(fallback);
                 yield break;
             }
 
@@ -45,14 +48,43 @@ namespace Game.Debate
             yield return RequestOpenAIFeedback(
                 safeRequest,
                 apiKey,
-                DebateCommandParser.ResolveResponsesEndpoint(DebateCommandParser.ResolveBaseUrl(_baseUrl)),
+                DebateCommandParser.ResolveChatCompletionsEndpoint(DebateCommandParser.ResolveBaseUrl(_baseUrl)),
                 result =>
                 {
                     parsed = result;
                     completed = true;
                 });
 
-            onComplete?.Invoke(completed && parsed != null ? parsed : BuildLocalFallback(safeRequest));
+            if (completed && parsed != null && parsed.Source == CoachFeedbackSource.OpenAI)
+            {
+                parsed.FeedbackLevel = safeRequest.FeedbackLevel;
+                if (safeRequest.FeedbackLevel == CoachFeedbackLevel.Level3 &&
+                    !IsConcreteExampleText(parsed.FeedbackText))
+                {
+                    parsed.Source = CoachFeedbackSource.Rules;
+                    parsed.DebugInfo =
+                        "GPT returned advice or meta-commentary instead of a concrete example sentence. The result was rejected and was not sent to Convai.";
+                    onComplete?.Invoke(parsed);
+                    yield break;
+                }
+
+                parsed.DebugInfo = string.IsNullOrWhiteSpace(parsed.FeedbackText)
+                    ? "GPT HTTP request succeeded and the JSON parsed, but feedback_text was empty. This is a response-format/content problem, not a network or API-key problem."
+                    : "GPT was called successfully and returned a parseable structured response.";
+                onComplete?.Invoke(parsed);
+                yield break;
+            }
+
+            if (completed && parsed != null)
+            {
+                onComplete?.Invoke(parsed);
+                yield break;
+            }
+
+            CoachFeedbackResult requestFallback = BuildLocalFallback(safeRequest);
+            requestFallback.DebugInfo = "GPT was attempted, but no usable result reached the app. This usually means a network timeout, server error, or response parsing failure.";
+            requestFallback.RawJson = "No response details were captured.";
+            onComplete?.Invoke(requestFallback);
         }
 
         public static JObject BuildStructuredOutputSchema()
@@ -94,10 +126,24 @@ namespace Game.Debate
         public static string BuildPrompt(CoachFeedbackRequest request)
         {
             CoachFeedbackRequest safeRequest = request ?? new CoachFeedbackRequest();
+            string currentStage = string.IsNullOrWhiteSpace(safeRequest.CurrentCreeiStage)
+                ? "Claim"
+                : safeRequest.CurrentCreeiStage.Trim();
+            CreeiStage creeiStage = CreeiStageGuidance.Parse(currentStage);
+            if (safeRequest.FeedbackLevel == CoachFeedbackLevel.Level3)
+            {
+                return BuildExamplePrompt(safeRequest, creeiStage);
+            }
+
+            string stageInstruction = safeRequest.FeedbackLevel == CoachFeedbackLevel.Summary
+                ? "Review the learner's work across all completed CREEI stages."
+                : "Current CREEI stage: " + currentStage + ".\n" +
+                  "Method for this stage: " + CreeiStageGuidance.GetMethod(creeiStage) + "\n" +
+                  "Coach task: " + CreeiStageGuidance.GetCoachTask(creeiStage) + "\n" +
+                  "Evaluate only the learner's " + currentStage +
+                  " for this turn. Do not criticize missing components from later CREEI stages.";
             string levelInstruction = safeRequest.FeedbackLevel switch
             {
-                CoachFeedbackLevel.Level3 =>
-                    "Feedback level: Level3. Give only a sentence frame or short example fragment. Do not write a full answer for the learner.",
                 CoachFeedbackLevel.Summary =>
                     "Feedback level: Summary. Summarize the practice debate in no more than four short sentences. Do not give a Transfer Debate answer.",
                 CoachFeedbackLevel.Level1 =>
@@ -106,6 +152,12 @@ namespace Game.Debate
                     "Feedback level: Level2. Give one diagnosis sentence and one next-step strategy sentence. Keep feedback within two short sentences."
             };
 
+            string outputInstruction = safeRequest.DetailedJson
+                ? "JSON mode: detail. Return exactly these fields: strong_component, weak_component, dominant_strategy, recommended_strategy, feedback_type, feedback_level, feedback_text, next_action. " +
+                  "Use Claim/Reason/Evidence/Explanation/Impact for component fields; Logos/Ethos/Pathos/Mixed/Any for strategy fields; " +
+                  "Level1/Level2/Level3/Summary for feedback_level; and clarify/add evidence/explain/show impact/qualify/balance/empathize for next_action."
+                : "JSON mode: minimal. Return exactly one field named feedback_text. Do not include any other fields.";
+
             return
                 "You are a debate strategy coach for an L2 English learner.\n" +
                 "You only provide short post-turn feedback during Practice Debate.\n" +
@@ -113,50 +165,102 @@ namespace Game.Debate
                 "Do not interrupt or coach before the learner speaks.\n" +
                 "Diagnose the learner's utterance using CREEI and Ethos/Pathos/Logos.\n" +
                 "Use encouraging but academically focused language.\n" +
-                levelInstruction + "\n\n" +
-                "Return JSON only with the requested schema.\n\n" +
+                "Write feedback_text in English only. Do not use Chinese or translate the feedback into another language.\n" +
+                stageInstruction + "\n" +
+                levelInstruction + "\n" +
+                outputInstruction + "\n\n" +
+                "Return one JSON object only. Do not use Markdown fences or add text outside the JSON object.\n\n" +
                 "Context:\n" +
                 "condition: " + safeRequest.Condition + "\n" +
                 "stage: " + safeRequest.Stage + "\n" +
                 "topic_id: " + safeRequest.TopicId + "\n" +
                 "topic: " + safeRequest.Topic + "\n" +
                 "learner_side: " + safeRequest.PlayerSide + "\n" +
+                "current_creei_stage: " + currentStage + "\n" +
                 "turn_id: " + safeRequest.TurnId + "\n" +
                 "selected_strategy: " + safeRequest.SelectedStrategy + "\n" +
                 "previous_commands: " + string.Join(" | ", safeRequest.PreviousCommands ?? Array.Empty<string>()) + "\n" +
                 "previous_npc_versions_viewed: " + string.Join(" | ", safeRequest.PreviousNpcVersionsViewed ?? Array.Empty<string>()) + "\n\n" +
+                "learner_completed_creei_stages:\n" + (safeRequest.PreviousLearnerCreeiStages ?? string.Empty) + "\n\n" +
                 "opponent_last_turn:\n" + safeRequest.OpponentUtteranceText + "\n\n" +
+                "previous_coach_advice:\n" + safeRequest.PreviousCoachFeedbackText + "\n\n" +
                 "learner_current_turn:\n" + safeRequest.PlayerUtteranceText;
+        }
+
+        private static string BuildExamplePrompt(CoachFeedbackRequest request, CreeiStage stage)
+        {
+            string currentStage = stage.ToString();
+            string outputInstruction = request.DetailedJson
+                ? "JSON mode: detail. Return exactly these fields: strong_component, weak_component, dominant_strategy, recommended_strategy, feedback_type, feedback_level, feedback_text, next_action. The feedback_text field must still contain only the example sentence."
+                : "JSON mode: minimal. Return exactly one field named feedback_text. Do not include any other fields.";
+
+            return
+                "You are generating a model sentence that an L2 English learner can say aloud in a debate.\n" +
+                "This is an EXAMPLE task, not a feedback or diagnosis task.\n" +
+                "Do not evaluate the learner. Do not give advice. Do not explain how to improve.\n" +
+                "Never write phrases such as 'you should', 'try to', 'consider', 'add', 'make sure', or 'your response'.\n" +
+                "Write in English only.\n\n" +
+                "Current CREEI stage: " + currentStage + "\n" +
+                "Method for this stage: " + CreeiStageGuidance.GetMethod(stage) + "\n" +
+                "Example task: " + CreeiStageGuidance.GetExampleTask(stage) + "\n\n" +
+                "Rewrite the learner's current stage utterance so it applies the previous Coach advice while preserving the learner's intended position.\n" +
+                "The output must be one natural, speakable model sentence that could replace the learner's original utterance.\n" +
+                "Output only that model sentence in feedback_text. Do not add a label, quotation marks, diagnosis, advice, explanation, or second sentence.\n" +
+                outputInstruction + "\n" +
+                "Return one JSON object only. Do not use Markdown fences or add text outside the JSON object.\n\n" +
+                "Context:\n" +
+                "topic: " + request.Topic + "\n" +
+                "learner_side: " + request.PlayerSide + "\n" +
+                "current_creei_stage: " + currentStage + "\n" +
+                "learner_completed_creei_stages:\n" + (request.PreviousLearnerCreeiStages ?? string.Empty) + "\n\n" +
+                "previous_coach_advice:\n" + request.PreviousCoachFeedbackText + "\n\n" +
+                "learner_current_stage_utterance:\n" + request.PlayerUtteranceText;
+        }
+
+        public static bool IsConcreteExampleText(string value)
+        {
+            string text = value?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return false;
+            }
+
+            string lower = text.ToLowerInvariant();
+            string[] adviceMarkers =
+            {
+                "you should", "you could", "try to", "consider ", "make sure", "your response",
+                "your claim", "your reason", "your evidence", "needs to", "could be improved",
+                "add more", "be more specific", "a stronger"
+            };
+            return !adviceMarkers.Any(lower.Contains);
         }
 
         public JObject BuildOpenAIRequestJson(CoachFeedbackRequest request)
         {
+            CoachFeedbackRequest safeRequest = request ?? new CoachFeedbackRequest();
             return new JObject
             {
                 ["model"] = _model,
-                ["input"] = new JArray
+                ["messages"] = new JArray
                 {
                     new JObject
                     {
                         ["role"] = "system",
-                        ["content"] = "Return only strict JSON for a debate Coach Agent feedback result."
+                        ["content"] = safeRequest.FeedbackLevel == CoachFeedbackLevel.Level3
+                            ? "Return strict JSON. feedback_text must be one speakable example sentence, never advice, evaluation, or meta-commentary. Write in English only."
+                            : safeRequest.DetailedJson
+                                ? "Return only strict JSON for a detailed debate Coach Agent feedback result. Write feedback_text in English only."
+                                : "Return only strict JSON with exactly one field named feedback_text. Write its value in English only."
                     },
                     new JObject
                     {
                         ["role"] = "user",
-                        ["content"] = BuildPrompt(request)
+                        ["content"] = BuildPrompt(safeRequest)
                     }
                 },
-                ["store"] = false,
-                ["text"] = new JObject
+                ["response_format"] = new JObject
                 {
-                    ["format"] = new JObject
-                    {
-                        ["type"] = "json_schema",
-                        ["name"] = "debate_coach_feedback",
-                        ["strict"] = true,
-                        ["schema"] = BuildStructuredOutputSchema()
-                    }
+                    ["type"] = "json_object"
                 }
             };
         }
@@ -180,9 +284,10 @@ namespace Game.Debate
                     RecommendedStrategy = selectedStrategy,
                     FeedbackType = "Example Frame",
                     FeedbackLevel = CoachFeedbackLevel.Level3,
-                    FeedbackText = "You could start with: For example, in a real English class... Then add one short detail that supports your point.",
+                    FeedbackText = string.Empty,
                     NextAction = "add evidence",
-                    Source = CoachFeedbackSource.Rules
+                    Source = CoachFeedbackSource.Rules,
+                    DebugInfo = "Local default example feedback is disabled for this scene."
                 };
             }
 
@@ -196,9 +301,10 @@ namespace Game.Debate
                     RecommendedStrategy = "Logos",
                     FeedbackType = "Practice Summary",
                     FeedbackLevel = CoachFeedbackLevel.Summary,
-                    FeedbackText = "You mainly practiced giving a clear position. The part to improve is Explanation: connect each example back to your claim. In the next debate, try to make the evidence-to-impact link more explicit.",
+                    FeedbackText = string.Empty,
                     NextAction = "explain",
-                    Source = CoachFeedbackSource.Rules
+                    Source = CoachFeedbackSource.Rules,
+                    DebugInfo = "Local default summary feedback is disabled for this scene."
                 };
             }
 
@@ -214,14 +320,6 @@ namespace Game.Debate
                 _ => "explain"
             };
 
-            string feedback = weak switch
-            {
-                "Evidence" => "Your claim is understandable, but the evidence is still weak. Next, try using Logos by adding one concrete classroom example.",
-                "Impact" => "Your reason is clear, but the impact is not explicit yet. Next, try using Pathos by explaining why this issue matters to students or teachers.",
-                "Reason" => "Your position is visible, but the reason needs to be clearer. Next, clarify the main reason before adding details.",
-                _ => "Your claim is clear, but the explanation is still weak. Next, try using Logos to explain why your example supports your point."
-            };
-
             return new CoachFeedbackResult
             {
                 StrongComponent = string.IsNullOrWhiteSpace(utterance) ? "Claim" : "Claim",
@@ -230,9 +328,10 @@ namespace Game.Debate
                 RecommendedStrategy = weak == "Impact" ? "Pathos" : selectedStrategy,
                 FeedbackType = weak + " Support",
                 FeedbackLevel = safeRequest.FeedbackLevel,
-                FeedbackText = feedback,
+                FeedbackText = string.Empty,
                 NextAction = nextAction,
-                Source = CoachFeedbackSource.Rules
+                Source = CoachFeedbackSource.Rules,
+                DebugInfo = "Local default Coach feedback is disabled for this scene."
             };
         }
 
@@ -257,20 +356,51 @@ namespace Game.Debate
 
             if (request.result != UnityWebRequest.Result.Success)
             {
+                string rawBody = TrimForLog(request.downloadHandler?.text);
+                CoachFeedbackResult fallback = BuildLocalFallback(requestData);
+                fallback.DebugInfo = BuildRequestFailureDebugInfo(endpoint, request.result, request.responseCode, request.error);
+                fallback.RawJson = string.IsNullOrWhiteSpace(rawBody)
+                    ? "(empty response body)"
+                    : rawBody;
                 Debug.LogWarning(
-                    $"Debate coach feedback request failed. endpoint={endpoint}, result={request.result}, status={request.responseCode}, error={request.error}, body={TrimForLog(request.downloadHandler?.text)}");
+                    $"Debate coach feedback request failed. endpoint={endpoint}, result={request.result}, status={request.responseCode}, error={request.error}, body={rawBody}");
+                onComplete?.Invoke(fallback);
                 yield break;
             }
 
-            CoachFeedbackResult parsed = TryParseOpenAIResponse(request.downloadHandler.text);
+            CoachFeedbackResult parsed = TryParseOpenAIResponse(request.downloadHandler.text, out string parseFailure);
             if (parsed != null)
             {
                 onComplete?.Invoke(parsed);
             }
             else
             {
-                Debug.LogWarning("Debate coach feedback response could not be parsed. body=" + TrimForLog(request.downloadHandler.text));
+                CoachFeedbackResult fallback = BuildLocalFallback(requestData);
+                fallback.DebugInfo = "HTTP request succeeded, but GPT response could not be parsed. " + parseFailure;
+                fallback.RawJson = TrimForLog(request.downloadHandler.text);
+                Debug.LogWarning("Debate coach feedback response could not be parsed. " + parseFailure + " body=" + fallback.RawJson);
+                onComplete?.Invoke(fallback);
             }
+        }
+
+        private static string BuildRequestFailureDebugInfo(
+            string endpoint,
+            UnityWebRequest.Result result,
+            long statusCode,
+            string error)
+        {
+            string likelyCause = statusCode switch
+            {
+                401 or 403 => "Likely API key or permission problem.",
+                429 => "Likely quota or rate-limit problem.",
+                >= 500 => "Likely upstream server problem.",
+                0 => "Likely network, DNS, proxy, certificate, or timeout problem.",
+                _ => "Check the HTTP status and response body."
+            };
+
+            return "Network/API request failed. " +
+                   $"result={result}; http_status={statusCode}; error={error}; endpoint={endpoint}. " +
+                   likelyCause;
         }
 
         private static string TrimForLog(string value)
@@ -284,18 +414,20 @@ namespace Game.Debate
             return compact.Length <= 600 ? compact : compact.Substring(0, 600) + "...";
         }
 
-        private static CoachFeedbackResult TryParseOpenAIResponse(string responseJson)
+        private static CoachFeedbackResult TryParseOpenAIResponse(string responseJson, out string failureReason)
         {
+            failureReason = string.Empty;
             try
             {
                 JObject response = JObject.Parse(responseJson);
                 string outputText = ExtractOutputText(response);
                 if (string.IsNullOrWhiteSpace(outputText))
                 {
+                    failureReason = "The response did not contain choices[0].message.content, output_text, or output[].content[].text.";
                     return null;
                 }
 
-                JObject parsedJson = JObject.Parse(outputText);
+                JObject parsedJson = JObject.Parse(StripJsonCodeFence(outputText));
                 CoachFeedbackResult result = ParseResultJson(parsedJson);
                 result.Source = CoachFeedbackSource.OpenAI;
                 result.RawJson = outputText;
@@ -303,13 +435,20 @@ namespace Game.Debate
             }
             catch (Exception ex)
             {
-                Debug.LogWarning("Debate coach feedback parse failed: " + ex.Message);
+                failureReason = "Parser error: " + ex.Message;
+                Debug.LogWarning("Debate coach feedback parse failed: " + failureReason);
                 return null;
             }
         }
 
         private static CoachFeedbackResult ParseResultJson(JObject json)
         {
+            string feedbackText = ReadString(json, "feedback_text", string.Empty);
+            if (string.IsNullOrWhiteSpace(feedbackText))
+            {
+                feedbackText = CombineAlternativeFeedbackFields(json);
+            }
+
             return new CoachFeedbackResult
             {
                 StrongComponent = ReadString(json, "strong_component", "Claim"),
@@ -320,13 +459,37 @@ namespace Game.Debate
                 FeedbackLevel = Enum.TryParse(ReadString(json, "feedback_level", "Level2"), true, out CoachFeedbackLevel level)
                     ? level
                     : CoachFeedbackLevel.Level2,
-                FeedbackText = ReadString(json, "feedback_text", string.Empty),
+                FeedbackText = feedbackText,
                 NextAction = ReadString(json, "next_action", "add evidence")
             };
         }
 
+        private static string CombineAlternativeFeedbackFields(JObject json)
+        {
+            string diagnosis = ReadString(json, "diagnosis", string.Empty);
+            string nextStep = ReadString(json, "next_step_strategy", string.Empty);
+            if (string.IsNullOrWhiteSpace(diagnosis))
+            {
+                return nextStep;
+            }
+
+            return string.IsNullOrWhiteSpace(nextStep)
+                ? diagnosis
+                : diagnosis + " " + nextStep;
+        }
+
         private static string ExtractOutputText(JObject response)
         {
+            JToken chatContent = response.SelectToken("choices[0].message.content");
+            if (chatContent?.Type == JTokenType.String)
+            {
+                string chatText = chatContent.Value<string>();
+                if (!string.IsNullOrWhiteSpace(chatText))
+                {
+                    return chatText;
+                }
+            }
+
             string direct = (string)response["output_text"];
             if (!string.IsNullOrWhiteSpace(direct))
             {
@@ -358,6 +521,24 @@ namespace Game.Debate
             }
 
             return string.Empty;
+        }
+
+        private static string StripJsonCodeFence(string value)
+        {
+            string trimmed = value?.Trim() ?? string.Empty;
+            if (!trimmed.StartsWith("```", StringComparison.Ordinal))
+            {
+                return trimmed;
+            }
+
+            int firstLineEnd = trimmed.IndexOf('\n');
+            int closingFence = trimmed.LastIndexOf("```", StringComparison.Ordinal);
+            if (firstLineEnd < 0 || closingFence <= firstLineEnd)
+            {
+                return trimmed;
+            }
+
+            return trimmed.Substring(firstLineEnd + 1, closingFence - firstLineEnd - 1).Trim();
         }
 
         private static string ReadString(JObject json, string key, string fallback)

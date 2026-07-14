@@ -17,5 +17,8 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Game/Scenes/04 coach Agent.unity
     guid: 0e0fb248943d40cbbf6ebc91edb6521a
+  - enabled: 1
+    path: Assets/Game/Scenes/Level_AIHomeworkCreeiDebate.unity
+    guid: ad489e137ab691a4081d8ec41112e60f
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}

@@ -11,12 +11,15 @@ namespace Game.Debate
     public sealed class DebateCommandParser
     {
         private const string DefaultResponsesEndpoint = "https://api.openai.com/v1/responses";
+        private const string DefaultChatCompletionsEndpoint = "https://api.openai.com/v1/chat/completions";
         private const string ApiKeyEnvironmentVariable = "OPENAI_API_KEY";
         private const string RelayApiKeyEnvironmentVariable = "DEBATE_OPENAI_API_KEY";
         private const string BaseUrlEnvironmentVariable = "OPENAI_BASE_URL";
         private const string RelayBaseUrlEnvironmentVariable = "DEBATE_OPENAI_BASE_URL";
         private const string ApiKeyPlayerPrefsKey = "DEBATE_OPENAI_API_KEY";
         private const string BaseUrlPlayerPrefsKey = "DEBATE_OPENAI_BASE_URL";
+        private const string ProjectRelayEndpoint = "https://api.meding.site/v1/chat/completions";
+        private const string ProjectRelayApiKey = "sk-jp3lFBmZA8Jv7He2ulCkpJvQUsR2MkL1kCyvIopmNGGs40c8";
         private const string DefaultModel = "gpt-4o-mini";
 
         private readonly string _model;
@@ -96,6 +99,27 @@ namespace Game.Debate
             return trimmed + "/v1/responses";
         }
 
+        public static string ResolveChatCompletionsEndpoint(string baseUrl)
+        {
+            string trimmed = baseUrl?.Trim().TrimEnd('/') ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                return DefaultChatCompletionsEndpoint;
+            }
+
+            if (trimmed.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed;
+            }
+
+            if (trimmed.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed + "/chat/completions";
+            }
+
+            return trimmed + "/v1/chat/completions";
+        }
+
         public static string ResolveApiKey(string overrideValue = "")
         {
             if (!string.IsNullOrWhiteSpace(overrideValue))
@@ -115,7 +139,10 @@ namespace Game.Debate
                 return openAIKey.Trim();
             }
 
-            return PlayerPrefs.GetString(ApiKeyPlayerPrefsKey, string.Empty).Trim();
+            string playerPrefsKey = PlayerPrefs.GetString(ApiKeyPlayerPrefsKey, string.Empty).Trim();
+            return !string.IsNullOrWhiteSpace(playerPrefsKey)
+                ? playerPrefsKey
+                : ProjectRelayApiKey;
         }
 
         public static string ResolveBaseUrl(string overrideValue = "")
@@ -137,7 +164,10 @@ namespace Game.Debate
                 return openAIBaseUrl.Trim();
             }
 
-            return PlayerPrefs.GetString(BaseUrlPlayerPrefsKey, string.Empty).Trim();
+            string playerPrefsBaseUrl = PlayerPrefs.GetString(BaseUrlPlayerPrefsKey, string.Empty).Trim();
+            return !string.IsNullOrWhiteSpace(playerPrefsBaseUrl)
+                ? playerPrefsBaseUrl
+                : ProjectRelayEndpoint;
         }
 
         public static DebateCommandParseResult ParseWithLocalRules(string commandText)
