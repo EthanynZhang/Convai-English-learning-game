@@ -13,8 +13,8 @@ namespace Game.Debate
     {
         private const string PlayerVsNpcScene = "03Level_PlayerVsNPCDebate";
         private const string NpcVsNpcScene = "01Level_NPCVsNPCDebate";
-        private const string InteractiveNpcScene = "02Level_InteractiveNPCDebate 1";
         private const string SharedInitiativeScene = "04 coach Agent";
+        private const string TransferDebateScene = "05Level_PlayerVsNPCDebate 1";
 
         private Canvas _canvas;
         private GameObject _menuRoot;
@@ -171,7 +171,7 @@ namespace Game.Debate
             CreateTitle(panel.transform, "DEBATE MENU");
             CreateButton(panel.transform, "Player vs NPC Debate", () => LoadLevel(PlayerVsNpcScene), new Color(0.10f, 0.42f, 0.67f));
             CreateButton(panel.transform, "NPC vs NPC Debate", () => LoadLevel(NpcVsNpcScene), new Color(0.14f, 0.50f, 0.42f));
-            CreateButton(panel.transform, "Interactive NPC Debate", () => LoadLevel(InteractiveNpcScene), new Color(0.33f, 0.45f, 0.70f));
+            CreateButton(panel.transform, "Transfer Debate", () => LoadLevel(TransferDebateScene), new Color(0.33f, 0.45f, 0.70f));
             CreateButton(panel.transform, "Coach Agent Study", () => LoadLevel(SharedInitiativeScene), new Color(0.52f, 0.35f, 0.68f));
             CreateButton(panel.transform, "Restart Current Level", RestartCurrentLevel, new Color(0.70f, 0.48f, 0.13f));
             CreateButton(panel.transform, "Quit Game", QuitGame, new Color(0.62f, 0.22f, 0.20f));

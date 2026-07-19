@@ -303,7 +303,6 @@ namespace Game.Tests.EditMode
             string[] sceneFiles =
             {
                 "01Level_NPCVsNPCDebate.unity",
-                "02Level_InteractiveNPCDebate 1.unity",
                 "03Level_PlayerVsNPCDebate.unity",
                 "04 coach Agent.unity",
                 "05Level_PlayerVsNPCDebate 1.unity"
@@ -319,8 +318,9 @@ namespace Game.Tests.EditMode
             string pauseMenu = File.ReadAllText(Path.Combine("Assets", "Game", "Scripts", "DebatePauseMenu.cs"));
             StringAssert.Contains("03Level_PlayerVsNPCDebate", pauseMenu);
             StringAssert.Contains("01Level_NPCVsNPCDebate", pauseMenu);
-            StringAssert.Contains("02Level_InteractiveNPCDebate 1", pauseMenu);
             StringAssert.Contains("04 coach Agent", pauseMenu);
+            StringAssert.Contains("05Level_PlayerVsNPCDebate 1", pauseMenu);
+            StringAssert.DoesNotContain("02Level_InteractiveNPCDebate 1", pauseMenu);
 
             string buildSettings = File.ReadAllText(Path.Combine("ProjectSettings", "EditorBuildSettings.asset"));
             foreach (string sceneFile in sceneFiles)
