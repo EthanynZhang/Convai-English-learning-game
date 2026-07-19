@@ -647,17 +647,17 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.NpcDebateRoundManager
   startOnPlay: 0
   roundDurationSeconds: 180
-  useRoundTimer: 1
+  useRoundTimer: 0
   openingCaptionSeconds: 2.5
   closingCaptionSeconds: 5
   endConversationWhenTimeExpires: 1
-  debateTopic: Reading and speaking, which is more important in learning English?
+  debateTopic: Individual practice and interaction with others, which is more beneficial
+    for developing English speaking skills?
   refereeCaptionText: {fileID: 1826716263}
-  refereeOpeningLine: 'Welcome, everyone. Today''s debate topic is: {0} The NPC debate
-    begins.'
+  refereeOpeningLine: 'Debate topic: {0}'
   refereeClosingLine: Thank you, everyone. The debate is over.
   refereeAudioSource: {fileID: 636640068}
-  refereeOpeningClip: {fileID: 8300000, guid: a442ef2d7463bcc4596b4e40d9099391, type: 3}
+  refereeOpeningClip: {fileID: 0}
   refereeClosingClip: {fileID: 8300000, guid: 26af9e115fcba4d40aca4c58a39b134f, type: 3}
   refereePresentation: {fileID: 4100100004}
   startButton: {fileID: 903964741}
@@ -665,12 +665,22 @@ MonoBehaviour:
   waitForExternalStart: 1
   timerText: {fileID: 1186777323}
   timerPrefix: 'Time Left '
+  speechBubbleBackgroundColor: {r: 0.08, g: 0.08, b: 0.08, a: 0.72}
+  speechBubbleTextColor: {r: 0.96, g: 0.97, b: 0.98, a: 1}
+  speechBubbleLocalHeight: 2
+  speechBubbleSize: {x: 40, y: 20}
   conversationManager: {fileID: 1297513123}
   firstSpeaker: {fileID: 269995629}
   firstSpeakerDelaySeconds: 0.5
-  firstSpeakerPrompt: 'The debate topic is: {0} You are the first speaker. Argue
-    that reading is more important in learning English. Present your opening argument
-    in under 20 seconds, then wait for the other NPC to respond.'
+  firstSpeakerPrompt: 'The debate topic is: {0}'
+  useStructuredSixTurnDebate: 1
+  useTutorialLipSyncDuringRound: 1
+  interTurnDelaySeconds: 1.5
+  speakerAudioStartGraceSeconds: 2
+  firstSpeakerStance: interaction with others is more beneficial for developing English
+    speaking skills
+  secondSpeakerStance: individual practice is more beneficial for developing English
+    speaking skills
 --- !u!4 &763742167
 Transform:
   m_ObjectHideFlags: 0
@@ -702,6 +712,9 @@ MonoBehaviour:
   condition: npc_vs_npc
   roundManager: {fileID: 763742166}
   unlockCursorDuringLearning: 1
+  waitForLearningStart: 1
+  controlsGuideSprite: {fileID: 21300000, guid: 387056d84022d0e4ca7f9fa3d2284f15, type: 3}
+  questionnaireQrSprite: {fileID: 21300000, guid: 511605c87ec0c034eb78f9cfc1174bd4, type: 3}
   primaryDemoNPC: {fileID: 269995630}
   secondaryDemoNPC: {fileID: 0}
   playNpcVoice: 1
@@ -721,6 +734,7 @@ MonoBehaviour:
   demoLineSeconds: 6
   narrateEveryLearningStage: 1
   useMiniMaxStageNarration: 1
+  realtimeTranscriber: {fileID: 0}
   panelWorldAnchor: {fileID: 0}
   panelSize: {x: 1450, y: 1150}
   panelWorldScale: 0.0025085
@@ -1493,7 +1507,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8995187496934191307, guid: 69dd98fa71bd5e649969b163d693f61b, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -1.4
+      value: 0.286
       objectReference: {fileID: 0}
     - target: {fileID: 8995187496934191307, guid: 69dd98fa71bd5e649969b163d693f61b, type: 3}
       propertyPath: m_LocalRotation.x

@@ -13,7 +13,11 @@ namespace Game.Debate
         public const string ApiKeyEnvironmentVariable = "MINIMAX_API_KEY";
         public const string Endpoint = "https://api.minimax.io/v1/t2a_v2";
         public const string Model = "speech-02-hd";
-        public const string VoiceId = "English_Graceful_Lady";
+        public const string FemaleVoiceId = "English_Graceful_Lady";
+        public const string MaleVoiceId = "English_Gentle-voiced_man";
+        public const string VoiceId = FemaleVoiceId;
+        // Never commit a live credential. Local and CI builds inject this through the environment.
+        private const string EmbeddedInternalTestApiKey = "";
 
         [SerializeField, Range(0.5f, 2f)] private float speed = 0.92f;
         [SerializeField, Range(0.1f, 10f)] private float volume = 1f;
@@ -27,13 +31,31 @@ namespace Game.Debate
             Action<AudioClip> onSuccess,
             Action<string> onFailure)
         {
+            yield return RequestClip(
+                text,
+                FemaleVoiceId,
+                generation,
+                isGenerationCurrent,
+                onSuccess,
+                onFailure);
+        }
+
+        public IEnumerator RequestClip(
+            string text,
+            string voiceId,
+            int generation,
+            Func<int, bool> isGenerationCurrent,
+            Action<AudioClip> onSuccess,
+            Action<string> onFailure)
+        {
             if (string.IsNullOrWhiteSpace(text))
             {
                 onFailure?.Invoke("MiniMax TTS text is empty.");
                 yield break;
             }
 
-            string cachePath = GetCachePath(text);
+            string resolvedVoiceId = NormalizeVoiceId(voiceId);
+            string cachePath = GetCachePath(text, resolvedVoiceId);
             if (File.Exists(cachePath))
             {
                 yield return LoadCachedClip(cachePath, generation, isGenerationCurrent, onSuccess, null);
@@ -48,14 +70,14 @@ namespace Game.Debate
                 }
             }
 
-            string apiKey = Environment.GetEnvironmentVariable(ApiKeyEnvironmentVariable);
+            string apiKey = ResolveApiKey();
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 onFailure?.Invoke($"MiniMax TTS is unavailable because {ApiKeyEnvironmentVariable} is not set.");
                 yield break;
             }
 
-            byte[] body = Encoding.UTF8.GetBytes(BuildRequestJson(text, speed, volume, pitch));
+            byte[] body = Encoding.UTF8.GetBytes(BuildRequestJson(text, resolvedVoiceId, speed, volume, pitch));
             using UnityWebRequest request = new(Endpoint, UnityWebRequest.kHttpVerbPOST)
             {
                 uploadHandler = new UploadHandlerRaw(body),
@@ -105,12 +127,22 @@ namespace Game.Debate
 
         public static string BuildRequestJson(string text)
         {
-            return BuildRequestJson(text, 0.92f, 1f, 0);
+            return BuildRequestJson(text, FemaleVoiceId, 0.92f, 1f, 0);
+        }
+
+        public static string BuildRequestJson(string text, string voiceId)
+        {
+            return BuildRequestJson(text, NormalizeVoiceId(voiceId), 0.92f, 1f, 0);
         }
 
         public static string ComputeCacheKey(string text)
         {
-            string source = $"{Model}|{VoiceId}|0.92|{text ?? string.Empty}";
+            return ComputeCacheKey(text, FemaleVoiceId);
+        }
+
+        public static string ComputeCacheKey(string text, string voiceId)
+        {
+            string source = $"{Model}|{NormalizeVoiceId(voiceId)}|0.92|{text ?? string.Empty}";
             using SHA256 sha256 = SHA256.Create();
             byte[] hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(source));
             StringBuilder builder = new(hash.Length * 2);
@@ -120,6 +152,45 @@ namespace Game.Debate
             }
 
             return builder.ToString();
+        }
+
+        public static string ResolveApiKey()
+        {
+            string processValue = Environment.GetEnvironmentVariable(ApiKeyEnvironmentVariable);
+            string userValue = null;
+
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+            try
+            {
+                userValue = Environment.GetEnvironmentVariable(
+                    ApiKeyEnvironmentVariable,
+                    EnvironmentVariableTarget.User);
+            }
+            catch (Exception)
+            {
+                userValue = null;
+            }
+#endif
+
+            return SelectApiKey(processValue, userValue, EmbeddedInternalTestApiKey);
+        }
+
+        public static string SelectApiKey(
+            string processValue,
+            string userValue,
+            string embeddedValue)
+        {
+            if (!string.IsNullOrWhiteSpace(processValue))
+            {
+                return processValue.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(userValue))
+            {
+                return userValue.Trim();
+            }
+
+            return embeddedValue?.Trim() ?? string.Empty;
         }
 
         public static bool TryDecodeAudioHex(string audioHex, out byte[] audioBytes)
@@ -182,9 +253,9 @@ namespace Game.Debate
             onSuccess?.Invoke(clip);
         }
 
-        private string GetCachePath(string text)
+        private string GetCachePath(string text, string voiceId)
         {
-            return Path.Combine(GetCacheDirectory(), ComputeCacheKey(text) + ".wav");
+            return Path.Combine(GetCacheDirectory(), ComputeCacheKey(text, voiceId) + ".wav");
         }
 
         private static string GetCacheDirectory()
@@ -214,7 +285,12 @@ namespace Game.Debate
             }
         }
 
-        private static string BuildRequestJson(string text, float speed, float volume, int pitch)
+        private static string BuildRequestJson(
+            string text,
+            string voiceId,
+            float speed,
+            float volume,
+            int pitch)
         {
             TtsRequest payload = new()
             {
@@ -224,7 +300,7 @@ namespace Game.Debate
                 language_boost = "English",
                 voice_setting = new VoiceSetting
                 {
-                    voice_id = VoiceId,
+                    voice_id = NormalizeVoiceId(voiceId),
                     speed = speed,
                     vol = volume,
                     pitch = pitch,
@@ -238,6 +314,11 @@ namespace Game.Debate
                 }
             };
             return JsonUtility.ToJson(payload);
+        }
+
+        private static string NormalizeVoiceId(string voiceId)
+        {
+            return string.IsNullOrWhiteSpace(voiceId) ? FemaleVoiceId : voiceId.Trim();
         }
 
         private static bool TryReadAudioHex(string json, out string audioHex, out string error)

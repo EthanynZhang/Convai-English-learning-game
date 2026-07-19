@@ -5,6 +5,7 @@ using System.Reflection;
 using Game.Debate;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
 
 namespace Game.Tests.EditMode
@@ -18,7 +19,7 @@ namespace Game.Tests.EditMode
         private static readonly Assembly RuntimeAssembly = typeof(SharedInitiativeOrchestrationController).Assembly;
 
         [Test]
-        public void CoachFeedbackSchemaRequiresSupplementFieldsAndEnums()
+        public void CoachFeedbackSchemaContainsFeedbackOnlyFields()
         {
             Type generatorType = GetRuntimeType("Game.Debate.DebateCoachFeedbackGenerator");
             Assert.IsNotNull(generatorType, "DebateCoachFeedbackGenerator should exist.");
@@ -32,23 +33,21 @@ namespace Game.Tests.EditMode
             JArray required = (JArray)schema["required"];
             JObject properties = (JObject)schema["properties"];
 
-            CollectionAssert.IsSubsetOf(
+            CollectionAssert.AreEquivalent(
                 new[]
                 {
-                    "strong_component",
-                    "weak_component",
-                    "dominant_strategy",
-                    "recommended_strategy",
                     "feedback_type",
                     "feedback_level",
                     "feedback_text",
-                    "next_action"
+                    "next_action",
+                    "target_success_criterion"
                 },
                 required.Select(token => (string)token).ToArray());
 
-            CollectionAssert.AreEquivalent(
-                new[] { "Claim", "Reason", "Evidence", "Explanation", "Impact" },
-                ((JArray)properties["strong_component"]["enum"]).Select(token => (string)token).ToArray());
+            Assert.IsNull(properties["strong_component"]);
+            Assert.IsNull(properties["weak_component"]);
+            Assert.IsNull(properties["dominant_strategy"]);
+            Assert.IsNull(properties["recommended_strategy"]);
             CollectionAssert.Contains(
                 ((JArray)properties["feedback_level"]["enum"]).Select(token => (string)token).ToArray(),
                 "Level2");
@@ -71,6 +70,9 @@ namespace Game.Tests.EditMode
             SetField(request, "Topic", "Reading and speaking");
             SetField(request, "PlayerSide", "Speaking is more important.");
             SetField(request, "CurrentCreeiStage", "Reason");
+            SetField(request, "ConfirmedFocus", "Reason");
+            SetField(request, "DiagnosisIssueCode", "CREEI_REASON_WEAK");
+            SetField(request, "TargetSuccessCriterion", "State one reason that directly supports the claim.");
             SetField(request, "OpponentUtteranceText", "Reading gives students vocabulary.");
             SetField(request, "PlayerUtteranceText", "Speaking is better because practice is important.");
             SetField(request, "FeedbackLevel", Enum.Parse(levelType, "Level2"));
@@ -78,20 +80,26 @@ namespace Game.Tests.EditMode
             string level2Prompt = InvokeString(generatorType, "BuildPrompt", request);
             StringAssert.Contains("only provide short post-turn feedback", level2Prompt);
             StringAssert.Contains("Do not write a full answer", level2Prompt);
-            StringAssert.Contains("two short sentences", level2Prompt);
+            StringAssert.Contains("three short sentences", level2Prompt);
+            StringAssert.Contains("Quote one short exact phrase from the learner", level2Prompt);
+            StringAssert.Contains("concrete revision example", level2Prompt);
             StringAssert.Contains("Write feedback_text in English only", level2Prompt);
             StringAssert.Contains("JSON mode: minimal", level2Prompt);
             StringAssert.Contains("exactly one field named feedback_text", level2Prompt);
-            StringAssert.Contains("Current CREEI stage: Reason", level2Prompt);
-            StringAssert.Contains("Evaluate only the learner's Reason", level2Prompt);
+            StringAssert.Contains("condition-blind diagnosis is already complete", level2Prompt);
+            StringAssert.Contains("confirmed_focus: Reason", level2Prompt);
+            StringAssert.Contains("diagnosis_issue_code: CREEI_REASON_WEAK", level2Prompt);
+            StringAssert.Contains("target_success_criterion", level2Prompt);
             StringAssert.Contains("current_creei_stage: Reason", level2Prompt);
+            StringAssert.DoesNotContain("condition:", level2Prompt.ToLowerInvariant());
 
             SetField(request, "DetailedJson", true);
             string detailedPrompt = InvokeString(generatorType, "BuildPrompt", request);
             StringAssert.Contains("JSON mode: detail", detailedPrompt);
-            StringAssert.Contains("strong_component", detailedPrompt);
-            StringAssert.Contains("recommended_strategy", detailedPrompt);
+            StringAssert.Contains("feedback_type", detailedPrompt);
+            StringAssert.Contains("target_success_criterion", detailedPrompt);
             StringAssert.Contains("next_action", detailedPrompt);
+            StringAssert.Contains("Do not return diagnostic component or strategy labels", detailedPrompt);
 
             SetField(request, "FeedbackLevel", Enum.Parse(levelType, "Level3"));
             SetField(request, "PreviousCoachFeedbackText", "Add one concrete example to support your claim.");
@@ -569,7 +577,7 @@ namespace Game.Tests.EditMode
             StringAssert.Contains("SetCoachFeedbackBoardTextVisible(true);", source);
             StringAssert.Contains("SetCoachFeedbackBoardTextVisible(false);", source);
             StringAssert.Contains("_coachBoardTitleText.enabled = visible;", source);
-            StringAssert.DoesNotContain("_coachBoardRoot.SetActive(false);", source);
+            StringAssert.Contains("_coachBoardRoot.SetActive(false);", source);
             StringAssert.Contains("_opponentHeadCaptionText", source);
             StringAssert.Contains("_coachHeadCaptionText", source);
             StringAssert.Contains("ShowWorldCaption(", source);
@@ -672,21 +680,16 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void SharedInitiativeSceneWiresCoachControllerAndTranscriptBridge()
+        public void ThreeStageSceneReplacesLegacyControllerAndKeepsAsrBridge()
         {
             string scene = ReadAssetText(SharedInitiativeScenePath);
+            string threeStageControllerGuid = AssetDatabase.AssetPathToGUID(
+                "Assets/Game/Scripts/ThreeStageDebatePracticeController.cs");
 
-            StringAssert.Contains(
-                $"m_Script: {{fileID: 11500000, guid: {SharedInitiativeControllerGuid}, type: 3}}",
-                scene);
-            StringAssert.Contains("automaticCoachAfterPlayerVoice: 1", scene);
-            StringAssert.Contains("showManualPauseButton: 0", scene);
+            StringAssert.Contains(threeStageControllerGuid, scene);
+            StringAssert.DoesNotContain(SharedInitiativeControllerGuid, scene);
             StringAssert.Contains("speakCoachFeedback: 1", scene);
-            StringAssert.Contains("useWindowsTtsFallbackWhenConvaiSilent: 0", scene);
-            StringAssert.Contains("Use a warm, gentle, supportive adult female coaching", scene);
-            StringAssert.Contains("previousNpcVersionsViewed: []", scene);
-            StringAssert.Contains("legacyRoundTimer: {fileID: 1186777322}", scene);
-            StringAssert.Contains("transcriptBridge: {fileID: 8800100002}", scene);
+            StringAssert.Contains("realtimeTranscriber: {fileID: 8800100003}", scene);
             StringAssert.Contains(
                 $"m_Script: {{fileID: 11500000, guid: {TranscriptBridgeGuid}, type: 3}}",
                 scene);
@@ -694,18 +697,24 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void CoachControllerIsOnlyPresentInSharedInitiativeScene()
+        public void ThreeStageCoachControllerIsOnlyPresentInRuntimeSceneAndLegacyIsAbsent()
         {
             string scenesRoot = Path.Combine(GetAssetsPath(), "Game/Scenes");
             string[] scenePaths = Directory.GetFiles(scenesRoot, "*.unity", SearchOption.AllDirectories);
+            string threeStageGuid = AssetDatabase.AssetPathToGUID(
+                "Assets/Game/Scripts/ThreeStageDebatePracticeController.cs");
             string[] scenesWithCoach = scenePaths
-                .Where(path => File.ReadAllText(path).Contains(SharedInitiativeControllerGuid))
+                .Where(path => !path.Replace('\\', '/').Contains("/Scenes/backup/"))
+                .Where(path => File.ReadAllText(path).Contains(threeStageGuid))
                 .Select(path => Path.GetFileName(path))
                 .ToArray();
 
             CollectionAssert.AreEquivalent(
                 new[] { "04 coach Agent.unity" },
                 scenesWithCoach);
+            Assert.IsFalse(scenePaths
+                .Where(path => !path.Replace('\\', '/').Contains("/Scenes/backup/"))
+                .Any(path => File.ReadAllText(path).Contains(SharedInitiativeControllerGuid)));
         }
 
         private static Type GetRuntimeType(string typeName)

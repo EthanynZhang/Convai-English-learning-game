@@ -746,7 +746,7 @@ namespace Convai.Scripts.Runtime.Core
                     OnResultReceived?.Invoke(result);
                     ProcessCharacterEmotion(result, npc);
                     ProcessUserQuery(result);
-                    if (!_suppressCurrentVoiceResponse && ShouldSuppressVoiceResponse?.Invoke() != true)
+                    if (!_suppressCurrentVoiceResponse)
                     {
                         ProcessBtResponse(result, npc);
                         ProcessActionResponse(result, npc);
@@ -806,7 +806,7 @@ namespace Convai.Scripts.Runtime.Core
                     OnResultReceived?.Invoke(result);
                     ProcessCharacterEmotion(result, npc);
                     ProcessUserQuery(result);
-                    if (!_suppressCurrentVoiceResponse && ShouldSuppressVoiceResponse?.Invoke() != true)
+                    if (!_suppressCurrentVoiceResponse)
                     {
                         ProcessBtResponse(result, npc);
                         ProcessActionResponse(result, npc);

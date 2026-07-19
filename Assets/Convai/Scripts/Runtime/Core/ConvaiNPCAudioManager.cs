@@ -81,6 +81,13 @@ namespace Convai.Scripts.Runtime.Core
             return _responseAudios.Count;
         }
 
+        public static bool ShouldConsultNpcToNpcGate(
+            bool componentPresent,
+            bool componentEnabled)
+        {
+            return componentPresent && componentEnabled;
+        }
+
 
         public bool SetWaitForCharacterLipSync(bool value)
         {
@@ -101,7 +108,9 @@ namespace Convai.Scripts.Runtime.Core
                         while (_waitForCharacterLipSync)
                             yield return new WaitForSeconds(0.01f);
 
-                        if (_npcController != null)
+                        if (ShouldConsultNpcToNpcGate(
+                                _npcController != null,
+                                _npcController != null && _npcController.isActiveAndEnabled))
                         {
                             while (_npcController.IsOtherNPCTalking())
                             {

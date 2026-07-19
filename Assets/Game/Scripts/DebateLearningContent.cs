@@ -52,16 +52,18 @@ namespace Game.Debate
 
     public readonly struct CreeiVoicePracticePrompt
     {
-        public CreeiVoicePracticePrompt(CreeiPartKey part, string title, string prompt)
+        public CreeiVoicePracticePrompt(CreeiPartKey part, string title, string prompt, string example)
         {
             Part = part;
             Title = title;
             Prompt = prompt;
+            Example = example;
         }
 
         public CreeiPartKey Part { get; }
         public string Title { get; }
         public string Prompt { get; }
+        public string Example { get; }
     }
 
     public readonly struct DemoDialogueLine
@@ -146,23 +148,28 @@ namespace Game.Debate
             new(
                 CreeiPartKey.Claim,
                 "Claim",
-                "State this position in one clear sentence: Speaking is more important for learning English."),
+                "State this position in one clear sentence: Speaking is more important for learning English.",
+                "For example: Speaking is more important than reading for learning English."),
             new(
                 CreeiPartKey.Reason,
                 "Reason",
-                "Give one reason why speaking is more important for learning English."),
+                "Give one reason why speaking is more important for learning English.",
+                "For example: Speaking makes learners retrieve and use English in real time."),
             new(
                 CreeiPartKey.Evidence,
                 "Evidence",
-                "Give one fact, example, observation, or personal experience that shows how speaking practice helps English learners."),
+                "Give one fact, example, observation, or personal experience that shows how speaking practice helps English learners.",
+                "For example: In a weekly conversation club, learners listen, form sentences, and respond without reading a prepared answer."),
             new(
                 CreeiPartKey.Explanation,
                 "Explanation",
-                "Explain how your evidence shows that speaking turns language knowledge into practical communication."),
+                "Explain how your evidence shows that speaking turns language knowledge into practical communication.",
+                "For example: This real-time practice reveals what learners cannot say yet and turns passive knowledge into active communication."),
             new(
                 CreeiPartKey.Impact,
                 "Impact",
-                "Explain why stronger speaking ability matters for learners in real communication.")
+                "Explain why stronger speaking ability matters for learners in real communication.",
+                "For example: Learners become more confident and can communicate outside the classroom.")
         };
 
         public static readonly string[] StrategyNames =
@@ -276,12 +283,6 @@ namespace Game.Debate
                 CreeiReadingText,
                 CreeiReadingSeconds,
                 DebateLearningViewKind.Card),
-            new(
-                DebateLearningStageKey.MicroPracticeSpotMissing,
-                "Micro Practice 1: Spot the Missing Part",
-                SpotMissingPracticeText,
-                SpotMissingPracticeSeconds,
-                DebateLearningViewKind.MicroPractice),
             new(
                 DebateLearningStageKey.CreeiDialogueDemo,
                 "CREEI Dialogue Demo",

@@ -77,10 +77,15 @@ namespace Game.Debate
         Rules
     }
 
+    public enum CoachFeedbackFormat
+    {
+        FocusedShort,
+        Scene04CreeiDetailed
+    }
+
     [Serializable]
     public sealed class CoachFeedbackRequest
     {
-        public string Condition = "Condition C";
         public string Stage = "Practice Debate";
         public string TopicId = "reading_vs_speaking";
         public string Topic = string.Empty;
@@ -92,9 +97,17 @@ namespace Game.Debate
         public string PlayerUtteranceText = string.Empty;
         public string PreviousCoachFeedbackText = string.Empty;
         public string SelectedStrategy = string.Empty;
+        public string ConfirmedFocus = string.Empty;
+        public string LearnerRequest = string.Empty;
+        public string DiagnosisIssueCode = string.Empty;
+        public string RecommendedStrategy = string.Empty;
+        public string TargetSuccessCriterion = string.Empty;
+        public string[] CreeiMissingOrWeakComponents = Array.Empty<string>();
+        public string CreeiGapSummary = string.Empty;
         public string[] PreviousCommands = Array.Empty<string>();
         public string[] PreviousNpcVersionsViewed = Array.Empty<string>();
         public CoachFeedbackLevel FeedbackLevel = CoachFeedbackLevel.Level2;
+        public CoachFeedbackFormat FeedbackFormat = CoachFeedbackFormat.FocusedShort;
         public bool DetailedJson;
     }
 
@@ -109,6 +122,7 @@ namespace Game.Debate
         public CoachFeedbackLevel FeedbackLevel = CoachFeedbackLevel.Level2;
         public string FeedbackText = string.Empty;
         public string NextAction = "add evidence";
+        public string TargetSuccessCriterion = string.Empty;
         public CoachFeedbackSource Source = CoachFeedbackSource.Rules;
         public string RawJson = string.Empty;
         public string DebugInfo = string.Empty;

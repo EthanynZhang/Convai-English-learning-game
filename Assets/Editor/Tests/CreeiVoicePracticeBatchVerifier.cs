@@ -55,6 +55,7 @@ namespace Game.Tests.EditMode
                 NpcDebateLearningPhaseController controller = UnityEngine.Object.FindAnyObjectByType<NpcDebateLearningPhaseController>();
                 Assert.IsNotNull(controller, "The learning controller must exist in the NPC-vs-NPC scene.");
                 SetPrivateField(controller, "playNpcVoice", false);
+                InvokePrivate(controller, "BeginLearningFromStartGate");
                 AdvanceToStage(controller, "Micro Practice 2: Build Your CREEI Argument");
 
                 GameObject root = GetPrivateField<GameObject>(controller, "_root");

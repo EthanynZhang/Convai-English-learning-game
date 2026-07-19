@@ -19,7 +19,7 @@ namespace Game.Debate
         private const string ApiKeyPlayerPrefsKey = "DEBATE_OPENAI_API_KEY";
         private const string BaseUrlPlayerPrefsKey = "DEBATE_OPENAI_BASE_URL";
         private const string ProjectRelayEndpoint = "https://api.meding.site/v1/chat/completions";
-        private const string ProjectRelayApiKey = "sk-jp3lFBmZA8Jv7He2ulCkpJvQUsR2MkL1kCyvIopmNGGs40c8";
+        private const string ProjectRelayApiKey = "";
         private const string DefaultModel = "gpt-4o-mini";
 
         private readonly string _model;

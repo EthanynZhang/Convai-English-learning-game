@@ -119,6 +119,7 @@ Build1.rar
 
 # Local assistant/editor state
 /.claude/
+/.superpowers/
 
 # Local Unity recovery and scratch scene copies
 /[Aa]ssets/_Recovery/

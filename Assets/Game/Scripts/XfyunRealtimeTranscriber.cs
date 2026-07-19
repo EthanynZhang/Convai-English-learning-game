@@ -17,8 +17,8 @@ namespace Game.Debate
         public const string ApiKeyPlayerPrefsKey = "XFYUN_RTASR_API_KEY";
 
         private const string Endpoint = "wss://rtasr.xfyun.cn/v1/ws";
-        private const string ProjectAppId = "309e7d3c";
-        private const string ProjectApiKey = "739024599abf08cd804bafad624dc704";
+        private const string ProjectAppId = "";
+        private const string ProjectApiKey = "";
         private const int TargetSampleRate = 16000;
         private const int MicrophoneBufferSeconds = 10;
         private const int SamplesPerPacket = 640;
@@ -29,8 +29,10 @@ namespace Game.Debate
         private readonly ConcurrentQueue<Action> _mainThreadActions = new();
         private readonly ConcurrentQueue<byte[]> _audioPackets = new();
         private readonly SortedDictionary<int, string> _segments = new();
+        private readonly object _transcriptStateLock = new();
         private readonly List<float> _sourceSamples = new();
         private readonly List<short> _targetSamples = new();
+        private readonly List<short> _capturedPcm16 = new();
 
         private ClientWebSocket _socket;
         private CancellationTokenSource _sessionCancellation;
@@ -58,6 +60,18 @@ namespace Game.Debate
 
         public bool IsConnecting { get; private set; }
         public bool IsRecording { get; private set; }
+        public bool IsSessionActive => IsConnecting || IsRecording || _sessionCancellation != null;
+        public XfyunAudioCapture LastAudioCapture { get; private set; }
+        public string LatestTranscriptSnapshot
+        {
+            get
+            {
+                lock (_transcriptStateLock)
+                {
+                    return _latestTranscript ?? string.Empty;
+                }
+            }
+        }
 
         private void Update()
         {
@@ -134,10 +148,22 @@ namespace Game.Debate
 
         public void CancelSession()
         {
-            _cancelRequested = true;
+            CancelSessionAndGetLatestTranscript();
+        }
+
+        public string CancelSessionAndGetLatestTranscript()
+        {
+            string transcript;
+            lock (_transcriptStateLock)
+            {
+                _cancelRequested = true;
+                transcript = _latestTranscript ?? string.Empty;
+            }
+
             StopMicrophoneAndFlushAudio(false);
             _stopRequested?.TrySetResult(true);
             _sessionCancellation?.Cancel();
+            return transcript;
         }
 
         private async Task RunSessionAsync(string appId, string apiKey, CancellationToken cancellationToken)
@@ -183,7 +209,7 @@ namespace Game.Debate
 
                 if (!_cancelRequested && !_failureRaised)
                 {
-                    string completedTranscript = _latestTranscript;
+                    string completedTranscript = LatestTranscriptSnapshot;
                     QueueOnMainThread(() => SessionCompleted?.Invoke(completedTranscript));
                 }
             }
@@ -298,20 +324,31 @@ namespace Game.Debate
                 return;
             }
 
-            bool isFinalResult = string.Equals(data.cn?.st?.type, "0", StringComparison.Ordinal);
-            if (isFinalResult)
+            string latestTranscript;
+            lock (_transcriptStateLock)
             {
-                _segments[data.seg_id] = segment;
-                _liveSegment = string.Empty;
-            }
-            else
-            {
-                _liveSegment = segment;
+                if (_cancelRequested)
+                {
+                    return;
+                }
+
+                bool isFinalResult = string.Equals(data.cn?.st?.type, "0", StringComparison.Ordinal);
+                if (isFinalResult)
+                {
+                    _segments[data.seg_id] = segment;
+                    _liveSegment = string.Empty;
+                }
+                else
+                {
+                    _liveSegment = segment;
+                }
+
+                string confirmedTranscript = JoinSegments(_segments.Values);
+                _latestTranscript = JoinEnglishTokens(new[] { confirmedTranscript, _liveSegment });
+                latestTranscript = _latestTranscript;
             }
 
-            string confirmedTranscript = JoinSegments(_segments.Values);
-            _latestTranscript = JoinEnglishTokens(new[] { confirmedTranscript, _liveSegment });
-            QueueTranscriptUpdate(_latestTranscript);
+            QueueTranscriptUpdate(latestTranscript);
         }
 
         private void StartMicrophoneCapture()
@@ -421,7 +458,9 @@ namespace Game.Debate
                 int left = (int)_sourceSamplePosition;
                 float blend = (float)(_sourceSamplePosition - left);
                 float sample = Mathf.Lerp(_sourceSamples[left], _sourceSamples[left + 1], blend);
-                _targetSamples.Add(FloatToPcm16(sample));
+                short pcm16 = FloatToPcm16(sample);
+                _targetSamples.Add(pcm16);
+                _capturedPcm16.Add(pcm16);
                 _sourceSamplePosition += step;
             }
 
@@ -444,6 +483,8 @@ namespace Game.Debate
             {
                 CaptureAvailableMicrophoneAudio();
             }
+
+            FinalizeResearchAudioCapture();
 
             IsRecording = false;
             IsConnecting = false;
@@ -483,6 +524,19 @@ namespace Game.Debate
             _audioPackets.Enqueue(packet);
         }
 
+        private void FinalizeResearchAudioCapture()
+        {
+            if (LastAudioCapture != null || _capturedPcm16.Count == 0) return;
+            byte[] pcm16Bytes = new byte[_capturedPcm16.Count * sizeof(short)];
+            for (int index = 0; index < _capturedPcm16.Count; index++)
+            {
+                short sample = _capturedPcm16[index];
+                pcm16Bytes[index * 2] = (byte)(sample & 0xff);
+                pcm16Bytes[index * 2 + 1] = (byte)((sample >> 8) & 0xff);
+            }
+            LastAudioCapture = new XfyunAudioCapture(pcm16Bytes, TargetSampleRate, 1);
+        }
+
         private void RaiseFailure(string message)
         {
             if (_cancelRequested || _failureRaised)
@@ -517,15 +571,21 @@ namespace Game.Debate
             {
             }
 
-            _segments.Clear();
+            lock (_transcriptStateLock)
+            {
+                _segments.Clear();
+                _liveSegment = string.Empty;
+                _latestTranscript = string.Empty;
+                _cancelRequested = false;
+            }
+
             _sourceSamples.Clear();
             _targetSamples.Clear();
+            _capturedPcm16.Clear();
+            LastAudioCapture = null;
             _sourceSamplePosition = 0d;
             _pendingTranscriptUpdate = string.Empty;
             Interlocked.Exchange(ref _transcriptUpdateQueued, 0);
-            _liveSegment = string.Empty;
-            _latestTranscript = string.Empty;
-            _cancelRequested = false;
             _failureRaised = false;
             _microphonePositionReady = false;
         }

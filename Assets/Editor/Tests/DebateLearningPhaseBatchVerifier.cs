@@ -115,6 +115,14 @@ namespace Game.Tests.EditMode
             SetPrivateField(controller, "demoLineSeconds", 0.01f);
 
             GameObject root = GetPrivateField<GameObject>(controller, "_root");
+            Transform startGate = root.transform.Find("Debate Learning Start Gate");
+            Assert.IsNotNull(startGate);
+            Assert.IsTrue(startGate.gameObject.activeSelf);
+            InvokePrivate(controller, "BeginLearningFromStartGate");
+            Assert.IsFalse(startGate.gameObject.activeSelf);
+            Assert.IsFalse(string.IsNullOrWhiteSpace(
+                GetPrivateField<string>(controller, "_learningSessionId")));
+
             Button replayButton = GetPrivateField<Button>(controller, "_replayButton");
             List<Button> choiceButtons = GetPrivateField<List<Button>>(controller, "_choiceButtons");
             TMP_Text countdownText = GetPrivateField<TMP_Text>(controller, "_countdownText");
@@ -187,6 +195,8 @@ namespace Game.Tests.EditMode
             string csv = File.ReadAllText(logPath);
             StringAssert.Contains(_participantId, csv);
             StringAssert.Contains("npc_vs_npc", csv);
+            StringAssert.Contains("learning_started", csv);
+            StringAssert.Contains("learning_session_id", csv);
             StringAssert.Contains("final_summary", csv);
             StringAssert.Contains("Logos;Ethos;Pathos", csv);
             StringAssert.Contains(",Logos,", csv);
@@ -258,6 +268,146 @@ namespace Game.Tests.EditMode
         {
             SessionState.EraseBool(RunningKey);
             SessionState.EraseString(ParticipantKey);
+            EditorApplication.update -= VerifyRuntime;
+            EditorApplication.playModeStateChanged -= HandlePlayModeStateChanged;
+            EditorApplication.Exit(exitCode);
+        }
+    }
+
+    public static class DebateLearningStartGateBatchVerifier
+    {
+        private const string ScenePath = "Assets/Game/Scenes/01Level_NPCVsNPCDebate.unity";
+        private const string RunningKey = "Codex.DebateLearningStartGateBatchVerifier.Running";
+        private const string ParticipantKey = "Codex.DebateLearningStartGateBatchVerifier.Participant";
+        private const string FrameKey = "Codex.DebateLearningStartGateBatchVerifier.Frames";
+
+        [InitializeOnLoadMethod]
+        private static void ResumeAfterDomainReload()
+        {
+            if (!SessionState.GetBool(RunningKey, false))
+            {
+                return;
+            }
+
+            EditorApplication.playModeStateChanged -= HandlePlayModeStateChanged;
+            EditorApplication.playModeStateChanged += HandlePlayModeStateChanged;
+            if (EditorApplication.isPlaying)
+            {
+                Application.runInBackground = true;
+                EditorApplication.update -= VerifyRuntime;
+                EditorApplication.update += VerifyRuntime;
+            }
+        }
+
+        public static void Run()
+        {
+            SessionState.SetBool(RunningKey, true);
+            SessionState.SetString(ParticipantKey, "START_GATE_" + Guid.NewGuid().ToString("N"));
+            SessionState.SetInt(FrameKey, 0);
+            EditorApplication.playModeStateChanged -= HandlePlayModeStateChanged;
+            EditorApplication.playModeStateChanged += HandlePlayModeStateChanged;
+            EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+            EditorApplication.EnterPlaymode();
+        }
+
+        private static void HandlePlayModeStateChanged(PlayModeStateChange state)
+        {
+            if (state != PlayModeStateChange.EnteredPlayMode)
+            {
+                return;
+            }
+
+            Application.runInBackground = true;
+            EditorApplication.update -= VerifyRuntime;
+            EditorApplication.update += VerifyRuntime;
+        }
+
+        private static void VerifyRuntime()
+        {
+            int frames = SessionState.GetInt(FrameKey, 0) + 1;
+            SessionState.SetInt(FrameKey, frames);
+            if (frames < 5)
+            {
+                return;
+            }
+
+            try
+            {
+                NpcDebateLearningPhaseController controller =
+                    UnityEngine.Object.FindAnyObjectByType<NpcDebateLearningPhaseController>();
+                NpcDebateRoundManager roundManager =
+                    UnityEngine.Object.FindAnyObjectByType<NpcDebateRoundManager>();
+                Assert.IsNotNull(controller);
+                Assert.IsNotNull(roundManager);
+
+                string participant = SessionState.GetString(ParticipantKey, string.Empty);
+                SetPrivateField(controller, "participantId", participant);
+                SetPrivateField(controller, "playNpcVoice", false);
+
+                Assert.IsFalse(GetPrivateField<bool>(controller, "_started"));
+                Assert.IsFalse(roundManager.IsRoundRunning);
+                GameObject root = GetPrivateField<GameObject>(controller, "_root");
+                GameObject learningPanel = GetPrivateField<GameObject>(controller, "_learningPanel");
+                GameObject startGate = GetPrivateField<GameObject>(controller, "_startGate");
+                Button startButton = GetPrivateField<Button>(controller, "_startLearningButton");
+                Assert.IsTrue(root.activeSelf);
+                Assert.IsFalse(learningPanel.activeSelf);
+                Assert.IsTrue(startGate.activeSelf);
+                Assert.AreEqual("Start Debate Learning", startButton.GetComponentInChildren<TMP_Text>().text);
+
+                startButton.onClick.Invoke();
+
+                string sessionId = GetPrivateField<string>(controller, "_learningSessionId");
+                Assert.IsTrue(GetPrivateField<bool>(controller, "_started"));
+                StringAssert.StartsWith("DL-", sessionId);
+                Assert.IsTrue(learningPanel.activeSelf);
+                Assert.IsFalse(startGate.activeSelf);
+                Assert.AreEqual("Warm-up", GetPrivateField<TMP_Text>(controller, "_titleText").text);
+                Assert.IsFalse(roundManager.IsRoundRunning);
+
+                string logPath = Path.Combine(Application.persistentDataPath, DebateLearningLogger.FileName);
+                string csv = File.ReadAllText(logPath);
+                StringAssert.Contains("learning_session_id", csv);
+                StringAssert.Contains("learning_started", csv);
+                StringAssert.Contains(participant, csv);
+                StringAssert.Contains(sessionId, csv);
+
+                Debug.Log("CODEX_DEBATE_START_GATE_BATCH_VERIFIER_PASS " + sessionId);
+                CleanupAndExit(0);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError("CODEX_DEBATE_START_GATE_BATCH_VERIFIER_FAIL " + exception);
+                CleanupAndExit(1);
+            }
+        }
+
+        private static T GetPrivateField<T>(object target, string name)
+        {
+            FieldInfo field = target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(field, name);
+            return (T)field.GetValue(target);
+        }
+
+        private static void SetPrivateField(object target, string name, object value)
+        {
+            FieldInfo field = target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(field, name);
+            field.SetValue(target, value);
+        }
+
+        private static void InvokePrivate(object target, string name)
+        {
+            MethodInfo method = target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(method, name);
+            method.Invoke(target, null);
+        }
+
+        private static void CleanupAndExit(int exitCode)
+        {
+            SessionState.EraseBool(RunningKey);
+            SessionState.EraseString(ParticipantKey);
+            SessionState.EraseInt(FrameKey);
             EditorApplication.update -= VerifyRuntime;
             EditorApplication.playModeStateChanged -= HandlePlayModeStateChanged;
             EditorApplication.Exit(exitCode);

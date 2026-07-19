@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using Convai.Scripts.Runtime.Core;
+using Convai.Scripts.Runtime.Addons;
 using Convai.Scripts.Runtime.Features;
 using Convai.Scripts.Runtime.UI;
 using Convai.Scripts.Runtime.Utils;
@@ -12,6 +13,7 @@ using Service;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 namespace Game.Debate
@@ -30,6 +32,12 @@ namespace Game.Debate
         MockDebateSpeaking,
         MockDebateAwaitingTranscript,
         MockDebateEvaluating,
+        PracticeCycleReady,
+        PracticeCycleSpeaking,
+        PracticeCycleAwaitingTranscript,
+        PracticeCycleConfirmingTranscript,
+        PracticeCycleDiagnosing,
+        PracticeCycleCoach,
         Complete
     }
 
@@ -47,10 +55,13 @@ namespace Game.Debate
 
     public sealed class SharedInitiativeOrchestrationController : MonoBehaviour
     {
+        public const int PracticeCycleCount = 3;
+
         private enum RealtimeCapturePurpose
         {
             None,
             PracticeStage,
+            PracticeCycle,
             MockDebate
         }
 
@@ -107,6 +118,8 @@ namespace Game.Debate
 
         [Header("Realtime Transcription")]
         [SerializeField] private XfyunRealtimeTranscriber realtimeTranscriber;
+        [SerializeField] private CoachExperimentView experimentView;
+        [SerializeField] private CoachEpisodeController episodeController;
 
         public ConditionCSessionRecord SessionRecord = new();
         public OrchestrationPhase Phase { get; private set; } = OrchestrationPhase.Intro;
@@ -197,6 +210,31 @@ namespace Game.Debate
         private float _mockDebateLeoDurationSeconds;
         private string[] _mockDebateLeoSpeechSegments = Array.Empty<string>();
         private int _mockDebateLeoSegmentIndex;
+        private readonly CoachPolicyConfig _coachPolicyConfig = CoachPolicyConfig.CreateDefault();
+        private ICoachDiagnosisEngine _diagnosisEngine;
+        private CoachResearchLogger _researchLogger;
+        private Coroutine _diagnosisRoutine;
+        private Coroutine _experimentFeedbackRoutine;
+        private Coroutine _practiceCycleTranscriptTimeoutRoutine;
+        private CoachDiagnosisResult _practiceDiagnosis;
+        private CoachOrchestrationMode _orchestrationMode = CoachOrchestrationMode.Disabled;
+        private int _practiceCycleIndex;
+        private float _practiceCycleStartedAt;
+        private float _practiceCycleDurationSeconds;
+        private bool _practiceCycleRecording;
+        private bool _practiceCycleAutoStopRequested;
+        private bool _practiceCycleTechnicalFallback;
+        private bool _studyStarted;
+        private string _practiceCycleTranscript = string.Empty;
+        private string _confirmedPracticeTranscript = string.Empty;
+        private string _lastExperimentFeedback = string.Empty;
+        private CoachFeedbackLevel _lastExperimentFeedbackLevel = CoachFeedbackLevel.Level2;
+        private ConvaiPlayerMovement[] _playerMovementComponents = Array.Empty<ConvaiPlayerMovement>();
+        private bool[] _playerMovementOriginalStates = Array.Empty<bool>();
+        private bool _playerMovementFrozen;
+        private bool _isShuttingDown;
+        private CursorLockMode _originalCursorLockMode;
+        private bool _originalCursorVisible;
 
         private static readonly string[] MockDebateLeoCreeiSegments =
         {
@@ -220,28 +258,70 @@ namespace Game.Debate
 
         private void Awake()
         {
+            _originalCursorLockMode = Cursor.lockState;
+            _originalCursorVisible = Cursor.visible;
             BuildUi();
             BuildCoachFeedbackBoard();
             BuildWorldSpeechCaptions();
             HideLegacyUi();
+            experimentView = experimentView != null ? experimentView : GetComponent<CoachExperimentView>();
+            experimentView ??= gameObject.AddComponent<CoachExperimentView>();
+            experimentView.Build(uiCanvas);
+            episodeController = episodeController != null ? episodeController : GetComponent<CoachEpisodeController>();
+            episodeController ??= gameObject.AddComponent<CoachEpisodeController>();
+            episodeController.AutomaticTick = false;
+            SubscribeToExperimentView();
         }
 
         private void OnEnable()
         {
+            _isShuttingDown = false;
             RegisterVoiceInterceptor();
             RegisterConvaiInputSuppressors();
+            if (Application.isPlaying)
+            {
+                FreezePlayerMovement();
+            }
         }
 
         private void OnDisable()
         {
+            _isShuttingDown = true;
             UnregisterVoiceInterceptor();
             UnregisterConvaiInputSuppressors();
             UnsubscribeFromCoachAudio();
+            CancelExperimentActivity();
+            RestorePlayerControlState();
         }
 
         private void Update()
         {
             realtimeTranscriber?.Tick();
+
+            if (_practiceCycleRecording)
+            {
+                _practiceCycleDurationSeconds = Mathf.Min(
+                    _coachPolicyConfig.LearnerSpeechMaximumSeconds,
+                    Mathf.Max(0f, Time.realtimeSinceStartup - _practiceCycleStartedAt));
+                experimentView?.ShowPractice(
+                    _practiceCycleIndex,
+                    _practiceCycleDurationSeconds < _coachPolicyConfig.LearnerSpeechMinimumSeconds
+                        ? "Keep speaking. You can submit after 01:00."
+                        : "Press T to submit, or continue until automatic stop at 01:30.",
+                    _practiceCycleDurationSeconds,
+                    _practiceCycleTranscript,
+                    false,
+                    false);
+                if (CoachSpeechWindow.ShouldAutoStop(_practiceCycleDurationSeconds, _coachPolicyConfig))
+                {
+                    StopPracticeCycleRecording(true);
+                }
+            }
+
+            if (Phase == OrchestrationPhase.PracticeCycleCoach && episodeController != null)
+            {
+                episodeController.Advance(Time.unscaledDeltaTime, _coachFeedbackSpeechActive);
+            }
 
             if (!_legacySpeechBubblesDisabled)
             {
@@ -307,6 +387,12 @@ namespace Game.Debate
                 openAIBaseUrl,
                 openAIApiKeyOverride);
             _coachLogger = new DebateCoachLogger();
+            _diagnosisEngine = new CoachDiagnosisEngine(
+                openAIModel,
+                coachResponseTimeoutSeconds,
+                openAIBaseUrl,
+                openAIApiKeyOverride);
+            _researchLogger = new CoachResearchLogger();
             transcriptBridge = transcriptBridge != null
                 ? transcriptBridge
                 : GetComponent<InteractiveDebateTranscriptBridge>();
@@ -345,6 +431,7 @@ namespace Game.Debate
 
         private void OnDestroy()
         {
+            _isShuttingDown = true;
             if (_coachRoutine != null)
             {
                 StopCoroutine(_coachRoutine);
@@ -377,7 +464,9 @@ namespace Game.Debate
             UnsubscribeFromPlayerVoiceTranscript();
             UnsubscribeFromRealtimeTranscriber();
             realtimeTranscriber?.CancelSession();
-            SetControlCursor(false);
+            CancelExperimentActivity();
+            UnsubscribeFromExperimentView();
+            RestorePlayerControlState();
         }
 
         public void BeginConditionC()
@@ -410,6 +499,81 @@ namespace Game.Debate
             ShowCoachLineInLeftUi("Coach feedback will appear after your response.");
 
             StartCurrentCreeiStage();
+        }
+
+        private void SubscribeToExperimentView()
+        {
+            if (experimentView == null)
+            {
+                return;
+            }
+
+            experimentView.SessionStartRequested -= HandleStudySessionStart;
+            experimentView.ConfirmTranscriptRequested -= ConfirmPracticeCycleTranscript;
+            experimentView.RerecordRequested -= RerecordPracticeCycle;
+            experimentView.RetryDiagnosisRequested -= RetryPracticeCycleDiagnosis;
+            experimentView.SkipCycleRequested -= SkipPracticeCycle;
+            experimentView.LearnerActionRequested -= HandleCoachLearnerAction;
+            experimentView.SessionStartRequested += HandleStudySessionStart;
+            experimentView.ConfirmTranscriptRequested += ConfirmPracticeCycleTranscript;
+            experimentView.RerecordRequested += RerecordPracticeCycle;
+            experimentView.RetryDiagnosisRequested += RetryPracticeCycleDiagnosis;
+            experimentView.SkipCycleRequested += SkipPracticeCycle;
+            experimentView.LearnerActionRequested += HandleCoachLearnerAction;
+
+            if (episodeController != null)
+            {
+                episodeController.DecisionMade -= HandleCoachPolicyDecision;
+                episodeController.EpisodeEnded -= HandleCoachEpisodeEnded;
+                episodeController.DecisionMade += HandleCoachPolicyDecision;
+                episodeController.EpisodeEnded += HandleCoachEpisodeEnded;
+            }
+        }
+
+        private void UnsubscribeFromExperimentView()
+        {
+            if (experimentView != null)
+            {
+                experimentView.SessionStartRequested -= HandleStudySessionStart;
+                experimentView.ConfirmTranscriptRequested -= ConfirmPracticeCycleTranscript;
+                experimentView.RerecordRequested -= RerecordPracticeCycle;
+                experimentView.RetryDiagnosisRequested -= RetryPracticeCycleDiagnosis;
+                experimentView.SkipCycleRequested -= SkipPracticeCycle;
+                experimentView.LearnerActionRequested -= HandleCoachLearnerAction;
+            }
+
+            if (episodeController != null)
+            {
+                episodeController.DecisionMade -= HandleCoachPolicyDecision;
+                episodeController.EpisodeEnded -= HandleCoachEpisodeEnded;
+            }
+        }
+
+        private void HandleStudySessionStart(string anonymousParticipantId, CoachOrchestrationMode mode)
+        {
+            if (_studyStarted)
+            {
+                return;
+            }
+
+            CoachStudySessionSnapshot snapshot = CoachStudySessionContext.Initialize(
+                anonymousParticipantId,
+                mode,
+                debateTopic,
+                debateTopic);
+            participantId = snapshot.ParticipantId;
+            _orchestrationMode = snapshot.Mode;
+            _studyStarted = true;
+            condition = "Disabled";
+            taskGoal = "Complete the common five-stage CREEI prerequisite practice.";
+            if (_titleText != null) _titleText.text = "CREEI Prerequisite Practice";
+            if (_stageSelectorRoot != null) _stageSelectorRoot.SetActive(false);
+            if (_coachBoardRoot != null) _coachBoardRoot.SetActive(false);
+            if (_coachHeadCaptionRoot != null) _coachHeadCaptionRoot.SetActive(false);
+            FreezePlayerMovement();
+            experimentView?.HideAll();
+            if (_root != null) _root.SetActive(true);
+            BeginConditionC();
         }
 
         public void SelectStage(int stageIndex)
@@ -827,12 +991,40 @@ namespace Game.Debate
             Phase = OrchestrationPhase.PlayerResponseReady;
             SetControlCursor(true);
             ClearPreparedCoachFeedback();
+            if (_studyStarted)
+            {
+                ShowCoachLineInLeftUi("Coach is disabled during the common CREEI prerequisite practice.");
+                SetStatus($"{CurrentCreeiStage}: response saved. Moving to the next prerequisite stage...");
+                SetButtonsForPhase();
+                StartCoroutine(AdvanceDisabledCreeiStage());
+                return;
+            }
+
             ShowCoachLineInLeftUi("Coach is preparing feedback. Ask Anna will unlock when it is ready.");
             SetStatus(fromTypedFallback
                 ? $"{CurrentCreeiStage}: typed response saved. Stage-specific Coach feedback request started."
                 : $"{CurrentCreeiStage}: voice captured. Stage-specific Coach feedback request started.");
             SetButtonsForPhase();
             StartCoachFeedbackRequest(CoachFeedbackLevel.Level2, false);
+        }
+
+        private IEnumerator AdvanceDisabledCreeiStage()
+        {
+            yield return new WaitForSecondsRealtime(0.35f);
+            if (!_studyStarted || Phase != OrchestrationPhase.PlayerResponseReady)
+            {
+                yield break;
+            }
+
+            if (_creeiStageIndex >= CreeiStages.Length - 1)
+            {
+                BeginPracticeCycles();
+                yield break;
+            }
+
+            _learnerNoteInput.text = string.Empty;
+            _creeiStageIndex++;
+            StartCurrentCreeiStage();
         }
 
         private bool IsMockDebateInputPhase()
@@ -1024,6 +1216,12 @@ namespace Game.Debate
         {
             RunOnMainThread(() =>
             {
+                if (IsPracticeCyclePhase())
+                {
+                    TogglePracticeCycleRecording();
+                    return;
+                }
+
                 if (IsMockDebateInputPhase())
                 {
                     StartMockDebateTapRecording();
@@ -1032,6 +1230,749 @@ namespace Game.Debate
 
                 TogglePracticeStageRecording();
             });
+        }
+
+        private bool IsPracticeCyclePhase()
+        {
+            return Phase is OrchestrationPhase.PracticeCycleReady or
+                OrchestrationPhase.PracticeCycleSpeaking or
+                OrchestrationPhase.PracticeCycleAwaitingTranscript or
+                OrchestrationPhase.PracticeCycleConfirmingTranscript or
+                OrchestrationPhase.PracticeCycleDiagnosing or
+                OrchestrationPhase.PracticeCycleCoach;
+        }
+
+        private void BeginPracticeCycles()
+        {
+            StopCoachFeedbackSpeech(true);
+            _realtimeCapturePurpose = RealtimeCapturePurpose.None;
+            realtimeTranscriber?.CancelSession();
+            _practiceCycleIndex = 1;
+            if (_root != null) _root.SetActive(false);
+            BeginPracticeCycle();
+        }
+
+        private void BeginPracticeCycle()
+        {
+            CancelExperimentNetworkRequests();
+            StopPracticeCycleTranscriptTimeout();
+            _practiceDiagnosis = null;
+            _practiceCycleTranscript = string.Empty;
+            _confirmedPracticeTranscript = string.Empty;
+            _lastExperimentFeedback = string.Empty;
+            _practiceCycleDurationSeconds = 0f;
+            _practiceCycleRecording = false;
+            _practiceCycleAutoStopRequested = false;
+            _practiceCycleTechnicalFallback = false;
+            Phase = OrchestrationPhase.PracticeCycleReady;
+            SetControlCursor(true);
+            experimentView?.SetTranscriptEditable(false);
+            experimentView?.ShowPractice(
+                _practiceCycleIndex,
+                "Press T to begin one complete 60–90 second argument. There is no opponent turn.",
+                0f,
+                string.Empty,
+                false,
+                false);
+        }
+
+        private void TogglePracticeCycleRecording()
+        {
+            if (_coachFeedbackSpeechActive)
+            {
+                experimentView?.ShowPractice(_practiceCycleIndex,
+                    "Coach speech must finish before the microphone can start.",
+                    _practiceCycleDurationSeconds, _practiceCycleTranscript, false, false);
+                return;
+            }
+
+            if (_practiceCycleRecording)
+            {
+                if (!CoachSpeechWindow.CanSubmit(_practiceCycleDurationSeconds, _coachPolicyConfig))
+                {
+                    experimentView?.ShowPractice(_practiceCycleIndex,
+                        "You cannot submit before 01:00. Keep speaking.",
+                        _practiceCycleDurationSeconds, _practiceCycleTranscript, false, false);
+                    return;
+                }
+
+                StopPracticeCycleRecording(false);
+                return;
+            }
+
+            if (Phase != OrchestrationPhase.PracticeCycleReady)
+            {
+                return;
+            }
+
+            if (realtimeTranscriber == null)
+            {
+                _practiceCycleTechnicalFallback = true;
+                _practiceCycleRecording = true;
+                _practiceCycleStartedAt = Time.realtimeSinceStartup;
+                _practiceCycleDurationSeconds = 0f;
+                Phase = OrchestrationPhase.PracticeCycleSpeaking;
+                experimentView?.SetTranscriptEditable(false);
+                experimentView?.ShowPractice(_practiceCycleIndex,
+                    "Transcription is unavailable. Keep speaking for 01:00–01:30; a researcher can enter the fallback transcript after the speech.",
+                    0f, string.Empty, false, false);
+                return;
+            }
+
+            if (realtimeTranscriber.IsConnecting)
+            {
+                experimentView?.ShowPractice(_practiceCycleIndex,
+                    "Realtime transcription is still connecting...", 0f, string.Empty, false, false);
+                return;
+            }
+
+            PrepareForPlayerVoiceInput();
+            _practiceCycleTranscript = string.Empty;
+            _realtimeCapturePurpose = RealtimeCapturePurpose.PracticeCycle;
+            experimentView?.ShowPractice(_practiceCycleIndex,
+                "Connecting to English realtime transcription...", 0f, string.Empty, false, false);
+            string microphoneDevice = MicrophoneManager.Instance?.SelectedMicrophoneName ?? string.Empty;
+            realtimeTranscriber.StartSession(microphoneDevice);
+        }
+
+        private void StopPracticeCycleRecording(bool automatic)
+        {
+            if (!_practiceCycleRecording || _practiceCycleAutoStopRequested)
+            {
+                return;
+            }
+
+            _practiceCycleAutoStopRequested = true;
+            _practiceCycleRecording = false;
+            if (automatic)
+            {
+                _practiceCycleDurationSeconds = _coachPolicyConfig.LearnerSpeechMaximumSeconds;
+            }
+            if (_practiceCycleTechnicalFallback)
+            {
+                _practiceCycleAutoStopRequested = false;
+                Phase = OrchestrationPhase.PracticeCycleConfirmingTranscript;
+                SetControlCursor(true);
+                experimentView?.SetTranscriptEditable(true);
+                experimentView?.ShowPractice(
+                    _practiceCycleIndex,
+                    "Speech duration requirement met. A researcher may enter the fallback transcript, or re-record.",
+                    _practiceCycleDurationSeconds,
+                    _practiceCycleTranscript,
+                    true,
+                    true);
+                return;
+            }
+            Phase = OrchestrationPhase.PracticeCycleAwaitingTranscript;
+            experimentView?.ShowPractice(_practiceCycleIndex,
+                automatic
+                    ? "01:30 reached. Finalizing transcript..."
+                    : "Recording stopped. Finalizing transcript...",
+                _practiceCycleDurationSeconds, _practiceCycleTranscript, false, false);
+            realtimeTranscriber?.StopSession();
+            StopPracticeCycleTranscriptTimeout();
+            _practiceCycleTranscriptTimeoutRoutine = StartCoroutine(
+                CompletePracticeCycleAfterTranscriptTimeout());
+        }
+
+        private IEnumerator CompletePracticeCycleAfterTranscriptTimeout()
+        {
+            yield return new WaitForSecondsRealtime(12f);
+            _practiceCycleTranscriptTimeoutRoutine = null;
+            if (Phase != OrchestrationPhase.PracticeCycleAwaitingTranscript)
+            {
+                yield break;
+            }
+
+            _realtimeCapturePurpose = RealtimeCapturePurpose.None;
+            realtimeTranscriber?.CancelSession();
+            Phase = OrchestrationPhase.PracticeCycleConfirmingTranscript;
+            SetControlCursor(true);
+            bool needsResearcherFallback = string.IsNullOrWhiteSpace(_practiceCycleTranscript);
+            experimentView?.SetTranscriptEditable(needsResearcherFallback);
+            experimentView?.ShowPractice(
+                _practiceCycleIndex,
+                needsResearcherFallback
+                    ? "Final transcript timed out. A researcher may enter a fallback transcript, or re-record."
+                    : "Final transcript timed out. Review the partial transcript, then confirm or re-record.",
+                _practiceCycleDurationSeconds,
+                _practiceCycleTranscript,
+                true,
+                true);
+        }
+
+        private void StopPracticeCycleTranscriptTimeout()
+        {
+            if (_practiceCycleTranscriptTimeoutRoutine == null)
+            {
+                return;
+            }
+
+            StopCoroutine(_practiceCycleTranscriptTimeoutRoutine);
+            _practiceCycleTranscriptTimeoutRoutine = null;
+        }
+
+        private void ConfirmPracticeCycleTranscript()
+        {
+            if (Phase != OrchestrationPhase.PracticeCycleConfirmingTranscript)
+            {
+                return;
+            }
+
+            string transcript = experimentView?.TranscriptText?.Trim() ?? _practiceCycleTranscript.Trim();
+            if (string.IsNullOrWhiteSpace(transcript))
+            {
+                experimentView?.ShowPractice(_practiceCycleIndex,
+                    "A non-empty transcript is required before diagnosis.",
+                    _practiceCycleDurationSeconds, transcript, false, true);
+                return;
+            }
+
+            _confirmedPracticeTranscript = transcript;
+            _practiceCycleTranscript = transcript;
+            BeginPracticeCycleDiagnosis();
+        }
+
+        private void RerecordPracticeCycle()
+        {
+            if (Phase != OrchestrationPhase.PracticeCycleConfirmingTranscript)
+            {
+                return;
+            }
+
+            _practiceCycleTranscript = string.Empty;
+            _confirmedPracticeTranscript = string.Empty;
+            BeginPracticeCycle();
+        }
+
+        private void RetryPracticeCycleDiagnosis()
+        {
+            if (Phase == OrchestrationPhase.PracticeCycleDiagnosing &&
+                !string.IsNullOrWhiteSpace(_confirmedPracticeTranscript))
+            {
+                LogExperimentEvent(
+                    "DiagnosisRetryRequested",
+                    CoachTerminationReason.None,
+                    CoachLearnerAction.RetryDiagnosis);
+                BeginPracticeCycleDiagnosis();
+            }
+        }
+
+        private void BeginPracticeCycleDiagnosis()
+        {
+            CancelExperimentNetworkRequests();
+            Phase = OrchestrationPhase.PracticeCycleDiagnosing;
+            experimentView?.SetTranscriptEditable(false);
+            experimentView?.ShowPractice(_practiceCycleIndex,
+                "Running condition-blind diagnosis...",
+                _practiceCycleDurationSeconds,
+                _confirmedPracticeTranscript,
+                false,
+                false);
+            CoachDiagnosisRequest request = new()
+            {
+                ParticipantId = participantId,
+                Stage = "PracticeDebate",
+                TopicId = topicId,
+                PracticeCycleId = _practiceCycleIndex,
+                TurnId = _practiceCycleIndex,
+                Topic = debateTopic,
+                LearnerSide = learnerStance,
+                PlayerUtteranceText = _confirmedPracticeTranscript,
+                SelectedStrategy = selectedStrategy
+            };
+            _diagnosisRoutine = StartCoroutine((_diagnosisEngine ??= new CoachDiagnosisEngine(
+                    openAIModel, coachResponseTimeoutSeconds, openAIBaseUrl, openAIApiKeyOverride))
+                .Diagnose(request, CompletePracticeCycleDiagnosis));
+        }
+
+        private void CompletePracticeCycleDiagnosis(CoachDiagnosisResult diagnosis)
+        {
+            _diagnosisRoutine = null;
+            if (Phase != OrchestrationPhase.PracticeCycleDiagnosing)
+            {
+                return;
+            }
+
+            if (diagnosis == null || !diagnosis.Success)
+            {
+                string error = diagnosis?.Error ?? "Diagnosis failed for an unknown technical reason.";
+                LogExperimentEvent("DiagnosisTechnicalFailure");
+                experimentView?.ShowPractice(_practiceCycleIndex,
+                    error + " Retry diagnosis or skip this cycle.",
+                    _practiceCycleDurationSeconds,
+                    _confirmedPracticeTranscript,
+                    false,
+                    false,
+                    true);
+                return;
+            }
+
+            _practiceDiagnosis = diagnosis;
+            Phase = OrchestrationPhase.PracticeCycleCoach;
+            experimentView?.SetSelectedFocus(diagnosis.RecommendedFocus);
+            episodeController.Configure(
+                _orchestrationMode,
+                _practiceCycleIndex,
+                _coachPolicyConfig,
+                _researchLogger);
+            episodeController.AutomaticTick = false;
+            episodeController.BeginOpportunity(
+                diagnosis,
+                _confirmedPracticeTranscript,
+                topicId,
+                _practiceCycleIndex);
+        }
+
+        private void SkipPracticeCycle()
+        {
+            if (Phase != OrchestrationPhase.PracticeCycleDiagnosing)
+            {
+                return;
+            }
+
+            CoachStudySessionSnapshot session = CoachStudySessionContext.Current;
+            _researchLogger?.LogEvent(new CoachEventRecord
+            {
+                ParticipantId = session?.ParticipantId ?? participantId,
+                SessionId = session?.SessionId ?? string.Empty,
+                OrchestrationMode = _orchestrationMode,
+                Stage = "PracticeDebate",
+                TopicId = topicId,
+                PracticeCycleId = _practiceCycleIndex,
+                TurnId = _practiceCycleIndex,
+                EventType = "DiagnosisTechnicalFailureSkipped",
+                LearnerControlAction = CoachLearnerAction.SkipCycle.ToString(),
+                ConfirmedLearnerText = _confirmedPracticeTranscript,
+                TerminationReason = CoachTerminationReason.CycleSkipped,
+                TerminationOwner = ControlOwner.Learner,
+                DiagnosisModelVersion = _coachPolicyConfig.DiagnosisModelVersion,
+                FeedbackModelVersion = _coachPolicyConfig.FeedbackModelVersion,
+                PolicyVersion = _coachPolicyConfig.PolicyVersion
+            });
+            AdvanceToNextPracticeCycle();
+        }
+
+        private void HandleCoachLearnerAction(CoachLearnerAction action, string focus)
+        {
+            if (Phase != OrchestrationPhase.PracticeCycleCoach || episodeController == null)
+            {
+                return;
+            }
+
+            if (action == CoachLearnerAction.RequestCoach)
+            {
+                LogExperimentEvent(
+                    "CoachRequested",
+                    CoachTerminationReason.None,
+                    CoachLearnerAction.RequestCoach);
+                if (_orchestrationMode == CoachOrchestrationMode.SharedControl)
+                {
+                    experimentView?.SetSelectedFocus(_practiceDiagnosis?.RecommendedFocus);
+                    experimentView?.ShowCoach(
+                        "AI suggested " + (_practiceDiagnosis?.RecommendedFocus ?? "a focus") +
+                        ". Keep it or choose another CREEI/rhetorical focus, then confirm.",
+                        string.Empty,
+                        true,
+                        CoachLearnerAction.ConfirmFocus,
+                        CoachLearnerAction.ExitCoaching);
+                }
+                else
+                {
+                    experimentView?.ShowCoach(
+                        "Choose the CREEI or rhetorical focus you want Coach to address, then confirm.",
+                        string.Empty,
+                        true,
+                        CoachLearnerAction.ConfirmFocus,
+                        CoachLearnerAction.ExitCoaching);
+                }
+                return;
+            }
+
+            if (action == CoachLearnerAction.Replay)
+            {
+                episodeController.SubmitLearnerAction(action, focus);
+                if (!string.IsNullOrWhiteSpace(_lastExperimentFeedback))
+                {
+                    StartCoachFeedbackSpeech(_lastExperimentFeedback);
+                }
+                return;
+            }
+
+            if (action == CoachLearnerAction.RetryFeedback)
+            {
+                LogExperimentEvent(
+                    "FeedbackRetryRequested",
+                    CoachTerminationReason.None,
+                    CoachLearnerAction.RetryFeedback);
+                StartExperimentFeedback(_lastExperimentFeedbackLevel);
+                return;
+            }
+
+            if (action == CoachLearnerAction.ExitCoaching)
+            {
+                StopCoachFeedbackSpeech(true);
+            }
+
+            string selectedFocus = action is CoachLearnerAction.ConfirmFocus or
+                CoachLearnerAction.ChangeFocus or CoachLearnerAction.Override
+                ? focus
+                : string.Empty;
+            episodeController.SubmitLearnerAction(action, selectedFocus);
+        }
+
+        private void HandleCoachPolicyDecision(CoachPolicyDecision decision)
+        {
+            if (decision == null || Phase != OrchestrationPhase.PracticeCycleCoach)
+            {
+                return;
+            }
+
+            switch (decision.Action)
+            {
+                case CoachPolicyAction.MakeAvailable:
+                {
+                    bool sharedSuggestion = _orchestrationMode == CoachOrchestrationMode.SharedControl &&
+                                            _practiceDiagnosis != null;
+                    bool noEligibleIssue = _practiceDiagnosis != null && !_practiceDiagnosis.HasEligibleIssue;
+                    experimentView?.ShowCoach(
+                        noEligibleIssue
+                            ? "No priority coaching issue was identified in this cycle."
+                            : sharedSuggestion
+                                ? "Diagnosis is ready. Suggested focus: " + _practiceDiagnosis.RecommendedFocus +
+                                  ". Coach remains silent until you ask."
+                                : "Diagnosis is ready. Coach remains silent until you ask.",
+                        noEligibleIssue ? "Your confirmed argument can move to the next practice cycle without Coach feedback." : string.Empty,
+                        sharedSuggestion && !noEligibleIssue,
+                        noEligibleIssue
+                            ? new[] { CoachLearnerAction.ApplyNextCycle, CoachLearnerAction.ExitCoaching }
+                            : new[]
+                            {
+                                CoachLearnerAction.RequestCoach,
+                                CoachLearnerAction.ApplyNextCycle,
+                                CoachLearnerAction.ExitCoaching
+                            });
+                    break;
+                }
+
+                case CoachPolicyAction.Invite:
+                    experimentView?.ShowCoach(
+                        "Coach invitation: " + BuildDiagnosisCategoryText() +
+                        ". Suggested focus: " + decision.ProposedFocus + ".",
+                        string.Empty,
+                        true,
+                        CoachLearnerAction.Accept,
+                        CoachLearnerAction.ChangeFocus,
+                        CoachLearnerAction.Decline,
+                        CoachLearnerAction.ExitCoaching);
+                    break;
+
+                case CoachPolicyAction.AutoStart:
+                case CoachPolicyAction.Start:
+                    StartExperimentFeedback(CoachFeedbackLevel.Level2);
+                    break;
+
+                case CoachPolicyAction.Continue:
+                    StartExperimentFeedback(
+                        decision.PolicyReason == CoachLearnerAction.NeedExample.ToString()
+                            ? CoachFeedbackLevel.Level3
+                            : CoachFeedbackLevel.Level2);
+                    break;
+
+                case CoachPolicyAction.Replay:
+                    break;
+
+                case CoachPolicyAction.End:
+                    StopCoachFeedbackSpeech(true);
+                    break;
+            }
+        }
+
+        private string BuildDiagnosisCategoryText()
+        {
+            if (_practiceDiagnosis == null)
+            {
+                return "argument structure";
+            }
+
+            string component = string.IsNullOrWhiteSpace(_practiceDiagnosis.WeakComponent)
+                ? "argument structure"
+                : _practiceDiagnosis.WeakComponent;
+            string strategy = string.IsNullOrWhiteSpace(_practiceDiagnosis.RecommendedStrategy)
+                ? string.Empty
+                : " / " + _practiceDiagnosis.RecommendedStrategy;
+            return component + strategy;
+        }
+
+        private void StartExperimentFeedback(CoachFeedbackLevel level)
+        {
+            _lastExperimentFeedbackLevel = level;
+            if (_experimentFeedbackRoutine != null)
+            {
+                StopCoroutine(_experimentFeedbackRoutine);
+            }
+
+            _experimentFeedbackRoutine = StartCoroutine(GenerateExperimentFeedback(level));
+        }
+
+        private IEnumerator GenerateExperimentFeedback(CoachFeedbackLevel level)
+        {
+            experimentView?.ShowCoach(
+                level == CoachFeedbackLevel.Level3
+                    ? "Generating the learner-requested example..."
+                    : "Generating focused Coach feedback...",
+                string.Empty,
+                false,
+                CoachLearnerAction.ExitCoaching);
+
+            CoachFeedbackRequest request = new()
+            {
+                Stage = "PracticeDebate",
+                TopicId = topicId,
+                Topic = debateTopic,
+                PlayerSide = learnerStance,
+                CurrentCreeiStage = NormalizeCreeiFocus(episodeController.ConfirmedFocus),
+                TurnId = _practiceCycleIndex,
+                PlayerUtteranceText = _confirmedPracticeTranscript,
+                PreviousCoachFeedbackText = _lastExperimentFeedback,
+                SelectedStrategy = selectedStrategy,
+                ConfirmedFocus = episodeController.ConfirmedFocus,
+                DiagnosisIssueCode = _practiceDiagnosis?.DiagnosisIssueCode ?? string.Empty,
+                RecommendedStrategy = _practiceDiagnosis?.RecommendedStrategy ?? string.Empty,
+                TargetSuccessCriterion = _practiceDiagnosis?.RecommendedNextAction ?? string.Empty,
+                FeedbackLevel = level,
+                DetailedJson = true
+            };
+
+            CoachFeedbackResult result = null;
+            yield return (_coachGenerator ??= new DebateCoachFeedbackGenerator(
+                    openAIModel, coachResponseTimeoutSeconds, openAIBaseUrl, openAIApiKeyOverride))
+                .GenerateFeedback(request, value => result = value);
+            _experimentFeedbackRoutine = null;
+
+            if (Phase != OrchestrationPhase.PracticeCycleCoach ||
+                result == null || result.Source != CoachFeedbackSource.OpenAI ||
+                string.IsNullOrWhiteSpace(result.FeedbackText))
+            {
+                LogExperimentEvent("FeedbackTechnicalFailure");
+                experimentView?.ShowCoach(
+                    "Coach feedback could not be generated. Retry the same request or end coaching safely.",
+                    _lastExperimentFeedback,
+                    false,
+                    CoachLearnerAction.RetryFeedback,
+                    CoachLearnerAction.ApplyNextCycle,
+                    CoachLearnerAction.ExitCoaching);
+                yield break;
+            }
+
+            _lastExperimentFeedback = result.FeedbackText.Trim();
+            episodeController.NotifyFeedbackPresented(
+                level.ToString(),
+                result.FeedbackType,
+                _lastExperimentFeedback);
+            bool aiLed = _orchestrationMode == CoachOrchestrationMode.AiLed;
+            experimentView?.ShowCoach(
+                aiLed
+                    ? $"Coach feedback. Action window: {episodeController.ActionWindowRemaining:0} seconds."
+                    : "Coach feedback is ready. Choose the next action.",
+                _lastExperimentFeedback,
+                true,
+                aiLed
+                    ? new[]
+                    {
+                        CoachLearnerAction.NeedExample,
+                        CoachLearnerAction.Override,
+                        CoachLearnerAction.Replay,
+                        CoachLearnerAction.ExitCoaching
+                    }
+                    : new[]
+                    {
+                        CoachLearnerAction.NeedExample,
+                        CoachLearnerAction.ChangeFocus,
+                        CoachLearnerAction.Replay,
+                        CoachLearnerAction.ApplyNextCycle,
+                        CoachLearnerAction.ExitCoaching
+                    });
+
+            if (speakCoachFeedback && coachNPC != null)
+            {
+                StartCoachFeedbackSpeech(_lastExperimentFeedback);
+            }
+        }
+
+        private static string NormalizeCreeiFocus(string focus)
+        {
+            return Enum.TryParse(focus, true, out CreeiStage stage)
+                ? stage.ToString()
+                : CreeiStage.Explanation.ToString();
+        }
+
+        private void HandleCoachEpisodeEnded(CoachTerminationReason reason)
+        {
+            if (Phase != OrchestrationPhase.PracticeCycleCoach)
+            {
+                return;
+            }
+
+            StopCoachFeedbackSpeech(true);
+            if (_isShuttingDown)
+            {
+                return;
+            }
+            AdvanceToNextPracticeCycle();
+        }
+
+        private void AdvanceToNextPracticeCycle()
+        {
+            CancelExperimentNetworkRequests();
+            if (_practiceCycleIndex >= PracticeCycleCount)
+            {
+                CompleteCoachStudyAndLoadTransfer();
+                return;
+            }
+
+            _practiceCycleIndex++;
+            BeginPracticeCycle();
+        }
+
+        private void CompleteCoachStudyAndLoadTransfer()
+        {
+            Phase = OrchestrationPhase.Complete;
+            _researchLogger?.Flush();
+            CancelExperimentActivity();
+            RestorePlayerControlState();
+            experimentView?.HideAll();
+            SceneManager.LoadScene("05Level_PlayerVsNPCDebate 1");
+        }
+
+        private void CancelExperimentNetworkRequests()
+        {
+            if (_diagnosisRoutine != null)
+            {
+                StopCoroutine(_diagnosisRoutine);
+                _diagnosisRoutine = null;
+            }
+            _diagnosisEngine?.Cancel();
+            if (_experimentFeedbackRoutine != null)
+            {
+                StopCoroutine(_experimentFeedbackRoutine);
+                _experimentFeedbackRoutine = null;
+            }
+            _coachGenerator?.Cancel();
+        }
+
+        private void CancelExperimentActivity()
+        {
+            if (episodeController != null && episodeController.HasOpenOpportunity)
+            {
+                episodeController.Complete(
+                    CoachTerminationReason.SafetyOverride,
+                    ControlOwner.SystemSafety);
+            }
+            CancelExperimentNetworkRequests();
+            StopPracticeCycleTranscriptTimeout();
+            _practiceCycleRecording = false;
+            _practiceCycleAutoStopRequested = false;
+            _practiceCycleTechnicalFallback = false;
+            _practiceVoiceRecording = false;
+            _practiceVoiceAwaitingTranscript = false;
+            _mockDebateRecording = false;
+            _realtimeCapturePurpose = RealtimeCapturePurpose.None;
+            realtimeTranscriber?.CancelSession();
+            StopCoachFeedbackSpeech(true);
+            _researchLogger?.Flush();
+        }
+
+        private void LogExperimentEvent(
+            string eventType,
+            CoachTerminationReason terminationReason = CoachTerminationReason.None,
+            CoachLearnerAction learnerAction = CoachLearnerAction.None)
+        {
+            CoachStudySessionSnapshot session = CoachStudySessionContext.Current;
+            CoachEpisodeState state = episodeController?.State ?? CoachEpisodeState.Inactive;
+            ControlOwner startOwner = _orchestrationMode switch
+            {
+                CoachOrchestrationMode.LearnerLed => ControlOwner.Learner,
+                CoachOrchestrationMode.SharedControl => ControlOwner.Shared,
+                CoachOrchestrationMode.AiLed => ControlOwner.Coach,
+                _ => ControlOwner.SystemSafety
+            };
+            _researchLogger?.LogEvent(new CoachEventRecord
+            {
+                ParticipantId = session?.ParticipantId ?? participantId,
+                SessionId = session?.SessionId ?? string.Empty,
+                OrchestrationMode = _orchestrationMode,
+                Stage = "PracticeDebate",
+                TopicId = topicId,
+                PracticeCycleId = _practiceCycleIndex,
+                TurnId = _practiceCycleIndex,
+                CoachEpisodeId = episodeController?.CoachEpisodeId ?? string.Empty,
+                EpisodeStateBefore = state,
+                EpisodeStateAfter = state,
+                EventType = eventType ?? string.Empty,
+                DiagnosisIssueCode = _practiceDiagnosis?.DiagnosisIssueCode ?? string.Empty,
+                DiagnosisSeverity = _practiceDiagnosis?.Severity ?? 0,
+                DiagnosisConfidence = _practiceDiagnosis?.Confidence ?? 0f,
+                ConfirmedFocus = episodeController?.ConfirmedFocus ?? string.Empty,
+                StartAuthority = startOwner,
+                AgendaOwner = startOwner,
+                PacingOwner = startOwner,
+                LearnerControlAction = learnerAction == CoachLearnerAction.None
+                    ? string.Empty
+                    : learnerAction.ToString(),
+                ConfirmedLearnerText = _confirmedPracticeTranscript,
+                TerminationReason = terminationReason,
+                TerminationOwner = terminationReason == CoachTerminationReason.TechnicalFailure
+                    ? ControlOwner.SystemSafety
+                    : _orchestrationMode == CoachOrchestrationMode.AiLed
+                        ? ControlOwner.Coach
+                        : ControlOwner.Learner,
+                DiagnosisModelVersion = _coachPolicyConfig.DiagnosisModelVersion,
+                FeedbackModelVersion = _coachPolicyConfig.FeedbackModelVersion,
+                PolicyVersion = _coachPolicyConfig.PolicyVersion
+            });
+        }
+
+        private void FreezePlayerMovement()
+        {
+            if (_playerMovementFrozen)
+            {
+                return;
+            }
+
+            _playerMovementComponents = FindObjectsByType<ConvaiPlayerMovement>(
+                FindObjectsInactive.Include,
+                FindObjectsSortMode.None);
+            _playerMovementOriginalStates = new bool[_playerMovementComponents.Length];
+            for (int index = 0; index < _playerMovementComponents.Length; index++)
+            {
+                ConvaiPlayerMovement movement = _playerMovementComponents[index];
+                _playerMovementOriginalStates[index] = movement != null && movement.enabled;
+                if (movement != null) movement.enabled = false;
+            }
+
+            _playerMovementFrozen = true;
+        }
+
+        private void RestorePlayerControlState()
+        {
+            if (_playerMovementFrozen)
+            {
+                for (int index = 0; index < _playerMovementComponents.Length; index++)
+                {
+                    ConvaiPlayerMovement movement = _playerMovementComponents[index];
+                    if (movement != null && index < _playerMovementOriginalStates.Length)
+                    {
+                        movement.enabled = _playerMovementOriginalStates[index];
+                    }
+                }
+
+                _playerMovementFrozen = false;
+            }
+
+            _isUiMode = _originalCursorVisible || _originalCursorLockMode != CursorLockMode.Locked;
+            Cursor.lockState = _originalCursorLockMode;
+            Cursor.visible = _originalCursorVisible;
         }
 
         private bool IsPracticeStageVoicePhase()
@@ -1180,6 +2121,26 @@ namespace Game.Debate
 
         private void HandleRealtimeTranscriptionStarted()
         {
+            if (_realtimeCapturePurpose == RealtimeCapturePurpose.PracticeCycle)
+            {
+                if (Phase != OrchestrationPhase.PracticeCycleReady)
+                {
+                    _realtimeCapturePurpose = RealtimeCapturePurpose.None;
+                    realtimeTranscriber?.CancelSession();
+                    return;
+                }
+
+                _practiceCycleRecording = true;
+                _practiceCycleAutoStopRequested = false;
+                _practiceCycleStartedAt = Time.realtimeSinceStartup;
+                _practiceCycleDurationSeconds = 0f;
+                Phase = OrchestrationPhase.PracticeCycleSpeaking;
+                experimentView?.SetTranscriptEditable(false);
+                experimentView?.ShowPractice(_practiceCycleIndex,
+                    "Recording. Keep speaking for at least 01:00.", 0f, string.Empty, false, false);
+                return;
+            }
+
             if (_realtimeCapturePurpose == RealtimeCapturePurpose.PracticeStage)
             {
                 if (!IsPracticeStageVoicePhase())
@@ -1214,6 +2175,26 @@ namespace Game.Debate
 
         private void HandleRealtimeTranscriptUpdated(string transcript)
         {
+            if (_realtimeCapturePurpose == RealtimeCapturePurpose.PracticeCycle)
+            {
+                if (Phase != OrchestrationPhase.PracticeCycleSpeaking &&
+                    Phase != OrchestrationPhase.PracticeCycleAwaitingTranscript)
+                {
+                    return;
+                }
+
+                _practiceCycleTranscript = transcript?.Trim() ?? string.Empty;
+                experimentView?.ShowPractice(_practiceCycleIndex,
+                    Phase == OrchestrationPhase.PracticeCycleAwaitingTranscript
+                        ? "Finalizing transcript..."
+                        : "Recording your complete argument...",
+                    _practiceCycleDurationSeconds,
+                    _practiceCycleTranscript,
+                    false,
+                    false);
+                return;
+            }
+
             if (_realtimeCapturePurpose == RealtimeCapturePurpose.PracticeStage)
             {
                 string practiceTranscript = transcript?.Trim() ?? string.Empty;
@@ -1263,6 +2244,33 @@ namespace Game.Debate
 
         private void HandleRealtimeTranscriptionCompleted(string transcript)
         {
+            if (_realtimeCapturePurpose == RealtimeCapturePurpose.PracticeCycle)
+            {
+                StopPracticeCycleTranscriptTimeout();
+                _practiceCycleRecording = false;
+                _practiceCycleAutoStopRequested = false;
+                _realtimeCapturePurpose = RealtimeCapturePurpose.None;
+                string finalTranscript = transcript?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(finalTranscript))
+                {
+                    _practiceCycleTranscript = finalTranscript;
+                }
+
+                Phase = OrchestrationPhase.PracticeCycleConfirmingTranscript;
+                SetControlCursor(true);
+                experimentView?.SetTranscriptEditable(false);
+                experimentView?.ShowPractice(
+                    _practiceCycleIndex,
+                    string.IsNullOrWhiteSpace(_practiceCycleTranscript)
+                        ? "No speech was transcribed. Re-record this cycle."
+                        : "Review the read-only transcript. Confirm it or re-record the whole argument.",
+                    _practiceCycleDurationSeconds,
+                    _practiceCycleTranscript,
+                    !string.IsNullOrWhiteSpace(_practiceCycleTranscript),
+                    true);
+                return;
+            }
+
             if (_realtimeCapturePurpose == RealtimeCapturePurpose.PracticeStage)
             {
                 _practiceVoiceRecording = false;
@@ -1314,6 +2322,46 @@ namespace Game.Debate
             string safeError = string.IsNullOrWhiteSpace(error)
                 ? "English realtime transcription failed for an unknown reason."
                 : error.Trim();
+
+            if (_realtimeCapturePurpose == RealtimeCapturePurpose.PracticeCycle)
+            {
+                StopPracticeCycleTranscriptTimeout();
+                _practiceCycleAutoStopRequested = false;
+                _realtimeCapturePurpose = RealtimeCapturePurpose.None;
+                if (!CoachSpeechWindow.CanSubmit(_practiceCycleDurationSeconds, _coachPolicyConfig))
+                {
+                    _practiceCycleTechnicalFallback = true;
+                    _practiceCycleRecording = true;
+                    if (_practiceCycleDurationSeconds <= 0f)
+                    {
+                        _practiceCycleStartedAt = Time.realtimeSinceStartup;
+                    }
+                    Phase = OrchestrationPhase.PracticeCycleSpeaking;
+                    experimentView?.SetTranscriptEditable(false);
+                    experimentView?.ShowPractice(
+                        _practiceCycleIndex,
+                        safeError + " Keep speaking until at least 01:00; a researcher can enter a fallback transcript afterward.",
+                        _practiceCycleDurationSeconds,
+                        _practiceCycleTranscript,
+                        false,
+                        false);
+                    return;
+                }
+
+                _practiceCycleRecording = false;
+                _practiceCycleTechnicalFallback = true;
+                Phase = OrchestrationPhase.PracticeCycleConfirmingTranscript;
+                SetControlCursor(true);
+                experimentView?.SetTranscriptEditable(true);
+                experimentView?.ShowPractice(
+                    _practiceCycleIndex,
+                    safeError + " A researcher may enter a fallback transcript, or re-record.",
+                    _practiceCycleDurationSeconds,
+                    _practiceCycleTranscript,
+                    true,
+                    true);
+                return;
+            }
 
             if (_realtimeCapturePurpose == RealtimeCapturePurpose.PracticeStage)
             {
@@ -1466,7 +2514,6 @@ namespace Game.Debate
             ShowCoachFeedbackOnBoard("Mock Debate - Complete CREEI", feedback);
             _latestCoachRequest = new CoachFeedbackRequest
             {
-                Condition = condition,
                 Stage = "Mock Debate",
                 TopicId = topicId,
                 Topic = debateTopic,
@@ -2110,7 +3157,6 @@ namespace Game.Debate
         {
             return new CoachFeedbackRequest
             {
-                Condition = condition,
                 Stage = "Practice Debate - " + CurrentCreeiStage,
                 TopicId = topicId,
                 Topic = debateTopic,
@@ -2166,7 +3212,7 @@ namespace Game.Debate
             return new CoachFeedbackLogRow
             {
                 ParticipantId = participantId,
-                Condition = request.Condition,
+                Condition = condition,
                 Stage = request.Stage,
                 TopicId = request.TopicId,
                 TurnId = request.TurnId,
@@ -2450,12 +3496,16 @@ namespace Game.Debate
 
         private bool ShouldSuppressCoachTalkInput()
         {
+            bool practiceCycleBlocked = IsPracticeCyclePhase() &&
+                                        Phase is not OrchestrationPhase.PracticeCycleReady and
+                                            not OrchestrationPhase.PracticeCycleSpeaking;
             bool shouldSuppress = Phase == OrchestrationPhase.Intro ||
                                   Phase == OrchestrationPhase.OpponentGenerating ||
                                   Phase == OrchestrationPhase.MockDebateOpponentSpeaking ||
                                   Phase == OrchestrationPhase.MockDebateAwaitingTranscript ||
                                   Phase == OrchestrationPhase.MockDebateEvaluating ||
                                   Phase == OrchestrationPhase.Complete ||
+                                  practiceCycleBlocked ||
                                   _coachFeedbackSpeechActive;
             if (!shouldSuppress)
             {
@@ -2471,14 +3521,15 @@ namespace Game.Debate
 
         private bool ShouldUseOrchestrationTapToTalk()
         {
-            return (IsPracticeStageVoicePhase() ||
+            return IsPracticeCyclePhase() ||
+                   ((IsPracticeStageVoicePhase() ||
                     Phase == OrchestrationPhase.OpponentSpeaking ||
                     _practiceVoiceRecording ||
                     _practiceVoiceAwaitingTranscript ||
                     Phase == OrchestrationPhase.MockDebateReady ||
                     Phase == OrchestrationPhase.MockDebateSpeaking ||
                     (_mockDebateFeedbackReady && Phase == OrchestrationPhase.CoachSuggestionReady)) &&
-                   !_coachFeedbackSpeechActive;
+                   !_coachFeedbackSpeechActive);
         }
 
         private void ShowTalkInputBlockedStatus()
@@ -2496,6 +3547,10 @@ namespace Game.Debate
                 OrchestrationPhase.MockDebateOpponentSpeaking => "Wait for Leo to finish his complete CREEI argument before using T.",
                 OrchestrationPhase.MockDebateAwaitingTranscript => "Recording has ended. Wait for the final transcript segment and Coach analysis.",
                 OrchestrationPhase.MockDebateEvaluating => "Wait for Coach to finish evaluating your Mock Debate before using T again.",
+                OrchestrationPhase.PracticeCycleAwaitingTranscript => "Recording has stopped. Wait for the final transcript.",
+                OrchestrationPhase.PracticeCycleConfirmingTranscript => "Confirm or re-record the transcript before using T again.",
+                OrchestrationPhase.PracticeCycleDiagnosing => "Diagnosis is in progress. Voice input is disabled.",
+                OrchestrationPhase.PracticeCycleCoach => "Coach interaction is active. Voice input is disabled for this episode.",
                 OrchestrationPhase.Complete => "This CREEI session is complete. Start a new session before using T.",
                 _ => "Voice input is temporarily unavailable. Please try T again in a moment."
             });
@@ -2541,9 +3596,19 @@ namespace Game.Debate
                 _stageText.text = "CREEI Stage: Not started";
             }
             SetMockDebateTimerVisible(false);
-            SetStatus("Press Start Conversation when you are ready.");
+            SetStatus(_studyStarted
+                ? "Starting common CREEI prerequisite practice..."
+                : "Researcher setup is required before the session starts.");
             _playerText.text = "Your response transcript will appear here after you speak.";
-            ShowCoachLineInLeftUi("Coach feedback will appear after your response.");
+            ShowCoachLineInLeftUi(_studyStarted
+                ? "Coach is disabled during the five common prerequisite stages."
+                : "Coach mode will be locked after researcher setup.");
+            if (!_studyStarted)
+            {
+                FreezePlayerMovement();
+                if (_root != null) _root.SetActive(false);
+                experimentView?.ShowSetup();
+            }
             UpdateStageSelectionVisuals();
             SetButtonsForPhase();
         }
@@ -3543,6 +4608,17 @@ namespace Game.Debate
                               Phase == OrchestrationPhase.MockDebateSpeaking ||
                               Phase == OrchestrationPhase.MockDebateAwaitingTranscript ||
                               Phase == OrchestrationPhase.MockDebateEvaluating;
+
+            if (_studyStarted)
+            {
+                SetActive(_startButton, false);
+                SetActive(_detailToggle, false);
+                SetActive(_askCoachButton, false);
+                SetActive(_exampleButton, false);
+                SetActive(_continueButton, false);
+                SetActive(_endButton, false);
+                return;
+            }
 
             SetActive(_startButton, intro);
             SetActive(_detailToggle, canChooseJsonMode);
