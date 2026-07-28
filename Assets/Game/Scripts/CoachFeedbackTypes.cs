@@ -80,7 +80,28 @@ namespace Game.Debate
     public enum CoachFeedbackFormat
     {
         FocusedShort,
-        Scene04CreeiDetailed
+        Scene04CreeiDetailed,
+        Scene04CreeiWorkbench
+    }
+
+    public enum CoachFeedbackPurpose
+    {
+        LearnerSocratic,
+        CriticalIssue,
+        TargetedAdvice,
+        Example,
+        AdditionalSuggestion,
+        DirectAdvice,
+        ConversationalFollowUp
+    }
+
+    [Serializable]
+    public sealed class CoachConversationTurn
+    {
+        public int TurnIndex;
+        public string LearnerRequest = string.Empty;
+        public string CoachResponse = string.Empty;
+        public CoachFeedbackPurpose Purpose;
     }
 
     [Serializable]
@@ -95,10 +116,17 @@ namespace Game.Debate
         public int TurnId;
         public string OpponentUtteranceText = string.Empty;
         public string PlayerUtteranceText = string.Empty;
+        public CreeiArgumentSnapshot CurrentCreeiSnapshot;
+        public CreeiArgumentSnapshot PreviousCreeiSnapshot;
+        public CreeiComponentDiagnosis ComponentDiagnosis;
         public string PreviousCoachFeedbackText = string.Empty;
         public string SelectedStrategy = string.Empty;
         public string ConfirmedFocus = string.Empty;
         public string LearnerRequest = string.Empty;
+        public bool LearnerRequestIsPrimaryAgenda;
+        public CoachFeedbackPurpose? Purpose;
+        public CoachConversationTurn[] ConversationHistory = Array.Empty<CoachConversationTurn>();
+        public string AcceptedCriticalFeedback = string.Empty;
         public string DiagnosisIssueCode = string.Empty;
         public string RecommendedStrategy = string.Empty;
         public string TargetSuccessCriterion = string.Empty;
@@ -126,6 +154,9 @@ namespace Game.Debate
         public CoachFeedbackSource Source = CoachFeedbackSource.Rules;
         public string RawJson = string.Empty;
         public string DebugInfo = string.Empty;
+        public int RequestAttemptCount;
+        public int RequestByteCount;
+        public int RequestElapsedMilliseconds;
     }
 
     [Serializable]

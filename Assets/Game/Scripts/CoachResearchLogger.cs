@@ -24,7 +24,7 @@ namespace Game.Debate
         public CoachResearchLogger(string directory = null)
         {
             DirectoryPath = string.IsNullOrWhiteSpace(directory)
-                ? Path.Combine(Application.persistentDataPath, "ResearchLogs")
+                ? ResearchSessionPaths.GetDefaultLegacyLogDirectory()
                 : directory;
             EventLogPath = Path.Combine(DirectoryPath, EventFileName);
             EpisodeSummaryPath = Path.Combine(DirectoryPath, EpisodeSummaryFileName);
@@ -38,10 +38,20 @@ namespace Game.Debate
 
         public void LogEvent(CoachEventRecord row)
         {
+            WriteEvent(row, true);
+        }
+
+        public void LogLocalEvent(CoachEventRecord row)
+        {
+            WriteEvent(row, false);
+        }
+
+        private void WriteEvent(CoachEventRecord row, bool mirrorToSession)
+        {
             row ??= new CoachEventRecord();
             if (string.IsNullOrWhiteSpace(row.EventId)) row.EventId = Guid.NewGuid().ToString("N");
             if (string.IsNullOrWhiteSpace(row.EventTimestamp)) row.EventTimestamp = DateTimeOffset.UtcNow.ToString("o");
-            ResearchCapture.RecordCoachEvent(row);
+            if (mirrorToSession) ResearchCapture.RecordCoachEvent(row);
             Append(EventLogPath, EventHeader, new[]
             {
                 row.ParticipantId, row.SessionId, row.OrchestrationMode.ToString(), row.Stage,

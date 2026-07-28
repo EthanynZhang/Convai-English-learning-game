@@ -27,9 +27,15 @@ namespace Convai.Scripts.Runtime.UI
             // Build the interactable references dictionary
             _interactableReferences = new Dictionary<GameObject, string>();
             foreach (ConvaiInteractablesData.Object eachObject in _interactablesData.Objects)
+            {
+                if (eachObject == null || eachObject.gameObject == null) continue;
                 _interactableReferences[eachObject.gameObject] = eachObject.Name;
+            }
             foreach (ConvaiInteractablesData.Character eachCharacter in _interactablesData.Characters)
+            {
+                if (eachCharacter == null || eachCharacter.gameObject == null) continue;
                 _interactableReferences[eachCharacter.gameObject] = eachCharacter.Name;
+            }
         }
 
         /// <summary>

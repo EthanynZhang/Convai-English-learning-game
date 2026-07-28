@@ -1,17 +1,19 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using Convai.Scripts.Runtime.Addons;
 using Convai.Scripts.Runtime.Core;
 using Convai.Scripts.Runtime.Features;
 using Convai.Scripts.Runtime.UI;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 namespace Game.Debate
 {
-    public sealed class ThreeStageDebatePracticeController : MonoBehaviour
+    public sealed class ThreeStageDebatePracticeController : MonoBehaviour, IMicroCreeiPracticeHost
     {
         private const string StandaloneDebugParticipantId = "DEBUG_SCENE04";
 
@@ -37,20 +39,22 @@ namespace Game.Debate
         [SerializeField] private CoachEpisodeController episodeController;
 
         [Header("World Layout")]
-        [SerializeField] private Vector3 coachFixedWorldPosition = new(1.1f, 0f, 2.33f);
+        [SerializeField] private Vector3 coachFixedWorldPosition = new(0.8f, 0f, 2.33f);
         [SerializeField] private Vector3 opponentFixedWorldPosition = new(-0.25f, 0f, 2.5f);
 
         [Header("Coach Services")]
         [SerializeField] private string openAIModel = "gpt-4o-mini";
         [SerializeField] private float responseTimeoutSeconds = 30f;
-        [SerializeField] private string openAIBaseUrl = "https://api.openai.com/v1/chat/completions";
+        [SerializeField] private string openAIBaseUrl = "https://api.meding.site/v1/chat/completions";
         [SerializeField] private string openAIApiKeyOverride = "";
         [SerializeField] private bool speakCoachFeedback = true;
         [SerializeField] private bool speakOpponentChallenges = true;
+        [SerializeField] private bool speakPracticeIntroductions = true;
 
         private readonly StringBuilder _liveTranscript = new();
         private CoachPolicyConfig _policyConfig;
         private CoachDiagnosisEngine _diagnosisEngine;
+        private ICreeiArgumentDiagnosisEngine _structuredDiagnosisEngine;
         private DebateCoachFeedbackGenerator _feedbackGenerator;
         private OpponentChallengeGenerator _challengeGenerator;
         private CoachResearchLogger _logger;
@@ -97,6 +101,10 @@ namespace Game.Debate
         private bool _coachSpeechPending;
         private bool _coachSpeechStarted;
         private float _coachSpeechDeadline;
+        private bool _stageIntroductionPending;
+        private bool _stageIntroductionSpeechStarted;
+        private float _stageIntroductionDeadline;
+        private System.Diagnostics.Process _stageIntroductionSpeechProcess;
         private MicroChallengeLoop _microLoop;
         private string _microInitialStatement = string.Empty;
         private string _currentChallenge = string.Empty;
@@ -108,6 +116,13 @@ namespace Game.Debate
         private float _opponentSpeechDeadline;
         private TechnicalOperation _technicalOperation;
         private bool _completionDataComplete;
+        private MicroCreeiPracticeController _microCreeiController;
+        private int _microCreeiSnapshotCount;
+        private int _microCreeiCompletedRoundCount;
+        private Action<bool> _microLeoSpeechCompletion;
+        private Action<bool> _microAnnaSpeechCompletion;
+        private float _microCoachVoiceRequestedAt;
+        private float _microCoachVoiceStartedAt;
 
         private enum TechnicalOperation
         {
@@ -127,6 +142,26 @@ namespace Game.Debate
         public float StageElapsedSeconds => Mathf.Max(0f, _stageElapsed);
         public bool IsCapturingLearnerRequest =>
             _voiceCaptureTarget == DebateVoiceCaptureTarget.LearnerRequest;
+        public string ParticipantId => CoachStudySessionContext.Current?.ParticipantId ?? string.Empty;
+        public string SessionId => CoachStudySessionContext.Current?.SessionId ?? string.Empty;
+        public string TopicId => topicId;
+        public string Topic => debateTopic;
+        public string LearnerStance => learnerStance;
+        public string DiagnosisModelVersion => _policyConfig?.DiagnosisModelVersion ?? "coach-diagnosis-local-v3";
+        public string PolicyVersion => _policyConfig?.PolicyVersion ?? "three-mode-v3";
+        public string LogDirectory
+        {
+            get
+            {
+                ResearchSessionManager manager = ResearchSessionManager.Instance != null
+                    ? ResearchSessionManager.Instance
+                    : FindAnyObjectByType<ResearchSessionManager>(FindObjectsInactive.Include);
+                return manager != null && manager.HasActiveSession
+                    ? manager.Current.SessionDirectory
+                    : string.Empty;
+            }
+        }
+        public bool IsNpcSpeechActive => _coachSpeechPending || _coachSpeechStarted;
 
         private void Awake()
         {
@@ -140,7 +175,7 @@ namespace Game.Debate
             {
                 coachNPC.transform.position = coachFixedWorldPosition;
                 ConvaiPlayerMovement learner =
-                    FindFirstObjectByType<ConvaiPlayerMovement>(FindObjectsInactive.Include);
+                    FindAnyObjectByType<ConvaiPlayerMovement>(FindObjectsInactive.Include);
                 if (learner != null)
                     coachNPC.transform.rotation = CoachFixedPoseAnchor.CalculateFacingRotation(
                         coachFixedWorldPosition, learner.transform.position);
@@ -150,7 +185,7 @@ namespace Game.Debate
             {
                 opponentNPC.transform.position = opponentFixedWorldPosition;
                 ConvaiPlayerMovement learner =
-                    FindFirstObjectByType<ConvaiPlayerMovement>(FindObjectsInactive.Include);
+                    FindAnyObjectByType<ConvaiPlayerMovement>(FindObjectsInactive.Include);
                 if (learner != null)
                     opponentNPC.transform.rotation = CoachFixedPoseAnchor.CalculateFacingRotation(
                         opponentFixedWorldPosition, learner.transform.position);
@@ -160,18 +195,18 @@ namespace Game.Debate
             if (coachNPC != null)
                 NpcRoleWorldLabel.Ensure(coachNPC.transform, "Coach (Anna)",
                     new Color(0.16f, 0.68f, 1f), new Vector3(0f, 2.15f, 0f));
-            if (opponentNPC != null)
-                NpcRoleWorldLabel.Ensure(opponentNPC.transform, "Opponent Leo",
-                    new Color(1f, 0.47f, 0.18f), new Vector3(0f, 2.15f, 0f));
             _policyConfig = CoachPolicyConfig.CreateDefault();
             _diagnosisEngine = new CoachDiagnosisEngine(
                 openAIModel, responseTimeoutSeconds, openAIBaseUrl, openAIApiKeyOverride);
+            _structuredDiagnosisEngine = new Scene04LocalCreeiDiagnosisEngine();
             _feedbackGenerator = new DebateCoachFeedbackGenerator(
-                openAIModel, responseTimeoutSeconds, openAIBaseUrl, openAIApiKeyOverride);
-            _challengeGenerator = new OpponentChallengeGenerator(
                 openAIModel, responseTimeoutSeconds, openAIBaseUrl, openAIApiKeyOverride);
             _logger = new CoachResearchLogger();
             studyView.Build(uiCanvas);
+            _microCreeiController = GetComponent<MicroCreeiPracticeController>();
+            if (_microCreeiController == null)
+                _microCreeiController = gameObject.AddComponent<MicroCreeiPracticeController>();
+            _microCreeiController.Configure(this, uiCanvas, realtimeTranscriber);
             Subscribe();
             RegisterInputRouting();
             FreezePlayer();
@@ -212,9 +247,17 @@ namespace Game.Debate
             if (ThreeStageDebatePracticeRules.ShouldKeepCursorVisible(Phase))
                 SetCursor(true);
             UpdateCoachSpeech();
+            UpdateStageIntroduction();
             UpdateOpponentSpeech();
+            if (_microCreeiController != null && _microCreeiController.IsActive)
+            {
+                _microCreeiController.Tick(Time.unscaledDeltaTime);
+                _stageElapsed = ThreeStageDebatePracticeRules.MicroPracticeSeconds -
+                                _microCreeiController.RemainingSeconds;
+                return;
+            }
             if (!_studyStarted || Phase is DebatePracticePhase.Complete or
-                DebatePracticePhase.Introduction) return;
+                DebatePracticePhase.Introduction or DebatePracticePhase.StageIntroduction) return;
 
             _stageElapsed = Mathf.Max(0f, Time.realtimeSinceStartup - _stageStartedAt);
             if (CurrentStage == DebatePracticeStage.MicroPractice &&
@@ -307,6 +350,8 @@ namespace Game.Debate
             _coachEpisodeCount = 0;
             _totalCoachSeconds = 0f;
             _completionDataComplete = false;
+            _microCreeiSnapshotCount = 0;
+            _microCreeiCompletedRoundCount = 0;
             _learnerRequest = string.Empty;
             ResetVoiceCaptureState(true);
             studyView.ClearLearnerRequest();
@@ -323,6 +368,11 @@ namespace Game.Debate
 
         public void ToggleRecording()
         {
+            if (_microCreeiController != null && _microCreeiController.IsActive)
+            {
+                _microCreeiController.ToggleComponentRecording();
+                return;
+            }
             if (_voiceCaptureTarget == DebateVoiceCaptureTarget.LearnerRequest)
             {
                 ToggleLearnerRequestRecording();
@@ -427,9 +477,9 @@ namespace Game.Debate
 
         private void ResolveSceneReferences()
         {
-            if (uiCanvas == null) uiCanvas = FindFirstObjectByType<Canvas>(FindObjectsInactive.Include);
+            if (uiCanvas == null) uiCanvas = FindAnyObjectByType<Canvas>(FindObjectsInactive.Include);
             if (realtimeTranscriber == null)
-                realtimeTranscriber = FindFirstObjectByType<XfyunRealtimeTranscriber>(FindObjectsInactive.Include);
+                realtimeTranscriber = FindAnyObjectByType<XfyunRealtimeTranscriber>(FindObjectsInactive.Include);
             if (coachNPC == null)
             {
                 foreach (ConvaiNPC npc in FindObjectsByType<ConvaiNPC>(FindObjectsInactive.Include))
@@ -483,8 +533,8 @@ namespace Game.Debate
             _transitioning = false;
             studyView?.HideCoachAgenda();
             CurrentStage = stage;
-            Phase = DebatePracticePhase.ReadyToRecord;
-            _stageStartedAt = Time.realtimeSinceStartup;
+            Phase = DebatePracticePhase.StageIntroduction;
+            _stageStartedAt = 0f;
             _stageElapsed = 0f;
             RecordingElapsedSeconds = 0f;
             ConfirmedTranscript = string.Empty;
@@ -502,7 +552,7 @@ namespace Game.Debate
             }
             if (stage == DebatePracticeStage.MicroPractice)
             {
-                _microLoop = new MicroChallengeLoop();
+                _microLoop = null;
                 _microInitialStatement = string.Empty;
                 _currentChallenge = string.Empty;
                 _currentAttackFocus = string.Empty;
@@ -514,6 +564,173 @@ namespace Game.Debate
                 _microLoop = null;
             }
             RegisterInputRouting();
+            BeginStageIntroduction();
+        }
+
+        private void BeginStageIntroduction()
+        {
+            Phase = DebatePracticePhase.StageIntroduction;
+            _stageIntroductionPending = true;
+            _stageIntroductionSpeechStarted = false;
+            _stageIntroductionDeadline = Time.realtimeSinceStartup +
+                                         GetFixedIntroductionTimeoutSeconds(
+                                             ThreeStageDebatePracticeRules.GetSpokenIntroduction(CurrentStage));
+            string introduction = ThreeStageDebatePracticeRules.GetSpokenIntroduction(CurrentStage);
+            ShowCurrentPractice(introduction);
+            ResearchCapture.RecordEvent("practice_introduction_started", "coach", "learner", new
+            {
+                practice_stage = CurrentStage.ToString(),
+                practice_number = ThreeStageDebatePracticeRules.GetStageNumber(CurrentStage),
+                introduction_text = introduction
+            });
+            if (!speakPracticeIntroductions)
+            {
+                CompleteStageIntroduction(false, "speech_disabled");
+                return;
+            }
+            StartFixedStageIntroductionSpeech(introduction);
+        }
+
+        private void UpdateStageIntroduction()
+        {
+            if (!_stageIntroductionPending || Phase != DebatePracticePhase.StageIntroduction) return;
+            if (ThreeStageDebatePracticeRules.HasStageIntroductionTimedOut(
+                    Time.realtimeSinceStartup, _stageIntroductionDeadline))
+            {
+                StopFixedStageIntroductionSpeech(true);
+                CompleteStageIntroduction(false, "hard_timeout");
+                return;
+            }
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+            if (_stageIntroductionSpeechProcess != null)
+            {
+                try
+                {
+                    if (!_stageIntroductionSpeechProcess.HasExited) return;
+                    StopFixedStageIntroductionSpeech(false);
+                    CompleteStageIntroduction(true, string.Empty);
+                }
+                catch (InvalidOperationException exception)
+                {
+                    Debug.LogWarning("Could not observe the fixed introduction voice: " + exception.Message);
+                    StopFixedStageIntroductionSpeech(false);
+                    CompleteStageIntroduction(false, "offline_tts_process_error");
+                }
+                return;
+            }
+#endif
+            if (_coachSpeechStarted) _stageIntroductionSpeechStarted = true;
+            if (_coachSpeechPending || _coachSpeechStarted) return;
+            CompleteStageIntroduction(
+                _stageIntroductionSpeechStarted,
+                _stageIntroductionSpeechStarted ? string.Empty : "speech_timeout_or_unavailable");
+        }
+
+        private void StartFixedStageIntroductionSpeech(string text)
+        {
+            StopFixedStageIntroductionSpeech(true);
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                CompleteStageIntroduction(false, "empty_introduction");
+                return;
+            }
+
+            try
+            {
+                string escapedText = text.Replace("'", "''");
+                string command =
+                    "Add-Type -AssemblyName System.Speech; " +
+                    "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
+                    "$englishVoices = $s.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.Name -like 'en-*' }; " +
+                    "$voice = $englishVoices | Where-Object { $_.VoiceInfo.Gender -eq 'Female' } | Select-Object -First 1; " +
+                    "if (-not $voice) { $voice = $englishVoices | Select-Object -First 1 }; " +
+                    "if ($voice) { $s.SelectVoice($voice.VoiceInfo.Name) }; " +
+                    "$s.Rate = 1; $s.Volume = 100; $s.Speak('" + escapedText + "'); $s.Dispose();";
+                string encodedCommand = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
+                System.Diagnostics.ProcessStartInfo startInfo = new()
+                {
+                    FileName = "powershell.exe",
+                    Arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand " + encodedCommand,
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                };
+                _stageIntroductionSpeechProcess = System.Diagnostics.Process.Start(startInfo);
+                if (_stageIntroductionSpeechProcess == null)
+                {
+                    CompleteStageIntroduction(false, "offline_tts_process_unavailable");
+                    return;
+                }
+                _stageIntroductionSpeechStarted = true;
+                Debug.Log("Started fixed practice introduction with offline Windows TTS.");
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("Offline practice introduction TTS failed: " + exception.Message);
+                CompleteStageIntroduction(false, "offline_tts_start_failed");
+            }
+#else
+            if (coachNPC == null)
+            {
+                CompleteStageIntroduction(false, "coach_npc_unavailable");
+                return;
+            }
+            StartCoachSpeech(text);
+#endif
+        }
+
+        private static float GetFixedIntroductionTimeoutSeconds(string text)
+        {
+            int wordCount = string.IsNullOrWhiteSpace(text)
+                ? 0
+                : text.Split(new[] { ' ', '\t', '\r', '\n' },
+                    StringSplitOptions.RemoveEmptyEntries).Length;
+            return Mathf.Clamp(8f + wordCount / 1.8f, 12f, 25f);
+        }
+
+        private void StopFixedStageIntroductionSpeech(bool terminate)
+        {
+            if (_stageIntroductionSpeechProcess == null) return;
+            try
+            {
+                if (terminate && !_stageIntroductionSpeechProcess.HasExited)
+                    _stageIntroductionSpeechProcess.Kill();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("Could not stop the fixed introduction voice: " + exception.Message);
+            }
+            finally
+            {
+                _stageIntroductionSpeechProcess.Dispose();
+                _stageIntroductionSpeechProcess = null;
+            }
+        }
+
+        private void CompleteStageIntroduction(bool spoken, string failureReason)
+        {
+            if (!_stageIntroductionPending || Phase != DebatePracticePhase.StageIntroduction) return;
+            _stageIntroductionPending = false;
+            _stageIntroductionDeadline = 0f;
+            string eventType = spoken
+                ? "practice_introduction_completed"
+                : "practice_introduction_failed";
+            ResearchCapture.RecordEvent(eventType, spoken ? "coach" : "system", "learner", new
+            {
+                practice_stage = CurrentStage.ToString(),
+                practice_number = ThreeStageDebatePracticeRules.GetStageNumber(CurrentStage),
+                failure_reason = failureReason ?? string.Empty
+            });
+            Phase = DebatePracticePhase.ReadyToRecord;
+            _stageStartedAt = Time.realtimeSinceStartup;
+            _stageElapsed = 0f;
+            if (CurrentStage == DebatePracticeStage.MicroPractice)
+            {
+                studyView.SetRootVisible(false);
+                _microCreeiController.BeginMicroCreeiPractice();
+                return;
+            }
+            studyView.SetRootVisible(true);
             ShowCurrentPractice();
         }
 
@@ -523,6 +740,7 @@ namespace Game.Debate
             _transitioning = true;
             studyView?.HideCoachAgenda();
             CancelNetworkActivity();
+            StopFixedStageIntroductionSpeech(true);
             StopCoachSpeech();
             StopOpponentSpeech();
             ResetVoiceCaptureState(true);
@@ -597,7 +815,7 @@ namespace Game.Debate
             StopOpponentSpeech();
             if (!speakOpponentChallenges || opponentNPC == null || string.IsNullOrWhiteSpace(text))
             {
-                BeginCoachAfterOpponent();
+                CompleteOpponentSpeech(false);
                 return;
             }
             opponentNPC.gameObject.SetActive(true);
@@ -630,15 +848,27 @@ namespace Game.Debate
             {
                 _opponentSpeechPending = false;
                 _opponentSpeechStarted = false;
-                BeginCoachAfterOpponent();
+                CompleteOpponentSpeech(false);
                 return;
             }
             if (_opponentSpeechStarted && !talking && !queued)
             {
                 _opponentSpeechStarted = false;
                 _opponentSpeechPending = false;
-                BeginCoachAfterOpponent();
+                CompleteOpponentSpeech(true);
             }
+        }
+
+        private void CompleteOpponentSpeech(bool spoken)
+        {
+            Action<bool> completion = _microLeoSpeechCompletion;
+            _microLeoSpeechCompletion = null;
+            if (completion != null)
+            {
+                completion(spoken);
+                return;
+            }
+            BeginCoachAfterOpponent();
         }
 
         private void BeginCoachAfterOpponent()
@@ -706,8 +936,8 @@ namespace Game.Debate
             _voiceCaptureTarget = DebateVoiceCaptureTarget.PracticeSpeech;
             Phase = DebatePracticePhase.AwaitingTranscript;
             string device = MicrophoneManager.Instance?.SelectedMicrophoneName ?? string.Empty;
-            realtimeTranscriber.StartSession(device);
             ShowCurrentPractice("Connecting to English realtime transcription...");
+            realtimeTranscriber.StartSession(device);
         }
 
         private void StopRecording()
@@ -751,6 +981,7 @@ namespace Game.Debate
 
         private void HandleTranscriptionStarted()
         {
+            if (_microCreeiController != null && _microCreeiController.IsActive) return;
             if (_voiceCaptureTarget == DebateVoiceCaptureTarget.LearnerRequest &&
                 Phase == DebatePracticePhase.CoachInteraction)
             {
@@ -771,6 +1002,7 @@ namespace Game.Debate
 
         private void HandleTranscriptUpdated(string transcript)
         {
+            if (_microCreeiController != null && _microCreeiController.IsActive) return;
             if (_voiceCaptureTarget == DebateVoiceCaptureTarget.LearnerRequest &&
                 Phase == DebatePracticePhase.CoachInteraction)
             {
@@ -788,6 +1020,7 @@ namespace Game.Debate
 
         private void HandleTranscriptionCompleted(string transcript)
         {
+            if (_microCreeiController != null && _microCreeiController.IsActive) return;
             _recording = false;
             string final = string.IsNullOrWhiteSpace(transcript)
                 ? _liveTranscript.ToString().Trim()
@@ -835,6 +1068,7 @@ namespace Game.Debate
 
         private void HandleTranscriptionFailed(string error)
         {
+            if (_microCreeiController != null && _microCreeiController.IsActive) return;
             _recording = false;
             string partial = realtimeTranscriber?.LatestTranscriptSnapshot?.Trim() ??
                              _liveTranscript.ToString().Trim();
@@ -1371,6 +1605,16 @@ namespace Game.Debate
             _coachSpeechPending = true;
             _coachSpeechStarted = false;
             _coachSpeechDeadline = Time.realtimeSinceStartup + Mathf.Max(20f, responseTimeoutSeconds + 8f);
+            if (_microAnnaSpeechCompletion != null)
+            {
+                _microCoachVoiceRequestedAt = Time.realtimeSinceStartup;
+                _microCoachVoiceStartedAt = 0f;
+                RecordMicroEvent("coach_tts_requested", new
+                {
+                    round_index = _microCreeiController?.CurrentRoundIndex ?? 0,
+                    feedback_purpose = "coach_feedback"
+                });
+            }
             ConvaiNPCManager.Instance?.SetActiveConvaiNPC(coachNPC);
             coachNPC.SendTextDataAsync(prompt);
         }
@@ -1384,27 +1628,264 @@ namespace Game.Debate
             {
                 _coachSpeechPending = false;
                 _coachSpeechStarted = true;
+                if (_microAnnaSpeechCompletion != null)
+                {
+                    _microCoachVoiceStartedAt = Time.realtimeSinceStartup;
+                    RecordMicroEvent("coach_tts_started", new
+                    {
+                        round_index = _microCreeiController?.CurrentRoundIndex ?? 0,
+                        wait_milliseconds = Mathf.Max(0, Mathf.RoundToInt(
+                            (_microCoachVoiceStartedAt - _microCoachVoiceRequestedAt) * 1000f))
+                    });
+                }
                 return;
             }
             if (_coachSpeechPending && !queued && Time.realtimeSinceStartup >= _coachSpeechDeadline)
             {
                 _coachSpeechPending = false;
                 _coachSpeechStarted = false;
+                CompleteCoachSpeechCallback(false);
                 return;
             }
             if (_coachSpeechStarted && !talking && !queued)
             {
                 _coachSpeechStarted = false;
                 _coachSpeechPending = false;
+                CompleteCoachSpeechCallback(true);
             }
+        }
+
+        private void CompleteCoachSpeechCallback(bool spoken)
+        {
+            Action<bool> completion = _microAnnaSpeechCompletion;
+            _microAnnaSpeechCompletion = null;
+            if (completion != null)
+            {
+                float completedAt = Time.realtimeSinceStartup;
+                float voiceStarted = _microCoachVoiceStartedAt > 0f
+                    ? _microCoachVoiceStartedAt
+                    : completedAt;
+                float voiceRequested = _microCoachVoiceRequestedAt > 0f
+                    ? _microCoachVoiceRequestedAt
+                    : completedAt;
+                RecordMicroEvent("coach_tts_completed", new
+                {
+                    round_index = _microCreeiController?.CurrentRoundIndex ?? 0,
+                    spoken,
+                    wait_milliseconds = Mathf.Max(0, Mathf.RoundToInt(
+                        (voiceStarted - voiceRequested) * 1000f)),
+                    speech_milliseconds = Mathf.Max(0, Mathf.RoundToInt(
+                        (completedAt - voiceStarted) * 1000f))
+                });
+            }
+            _microCoachVoiceRequestedAt = 0f;
+            _microCoachVoiceStartedAt = 0f;
+            completion?.Invoke(spoken);
         }
 
         private void StopCoachSpeech()
         {
-            coachNPC?.InterruptCharacterSpeech();
+            if ((_coachSpeechPending || _coachSpeechStarted) && coachNPC != null)
+                coachNPC.InterruptCharacterSpeech();
             _coachSpeechPending = false;
             _coachSpeechStarted = false;
             _coachSpeechDeadline = 0f;
+        }
+
+        public void RequestDiagnosis(
+            CreeiArgumentDiagnosisRequest request,
+            Action<CreeiArgumentDiagnosisResult> onComplete)
+        {
+            if (_structuredDiagnosisEngine == null)
+            {
+                onComplete?.Invoke(new CreeiArgumentDiagnosisResult
+                    { Success = false, Error = "Diagnosis service is unavailable." });
+                return;
+            }
+            if (_diagnosisRoutine != null) StopCoroutine(_diagnosisRoutine);
+            _diagnosisRoutine = StartCoroutine(_structuredDiagnosisEngine.Diagnose(request, result =>
+            {
+                _diagnosisRoutine = null;
+                if (result?.Success == true) _successfulDiagnosisCount++;
+                onComplete?.Invoke(result);
+            }));
+        }
+
+        public void RequestFeedback(
+            CreeiArgumentSnapshot current,
+            CreeiArgumentSnapshot previous,
+            CreeiComponent focus,
+            CreeiComponentDiagnosis diagnosis,
+            string learnerRequest,
+            string previousCoachFeedback,
+            CoachFeedbackPurpose purpose,
+            IReadOnlyList<CoachConversationTurn> conversationHistory,
+            string acceptedCriticalFeedback,
+            Action<CoachFeedbackResult> onComplete)
+        {
+            if (_feedbackRoutine != null) StopCoroutine(_feedbackRoutine);
+            _feedbackRoutine = StartCoroutine(_feedbackGenerator.GenerateFeedback(
+                new CoachFeedbackRequest
+                {
+                    Stage = "MicroCreeiWorkbench",
+                    TopicId = topicId,
+                    Topic = debateTopic,
+                    PlayerSide = learnerStance,
+                    CurrentCreeiStage = focus.ToString(),
+                    TurnId = _microCreeiController?.CurrentRoundIndex ?? 1,
+                    PlayerUtteranceText = current?.GetText(focus) ?? string.Empty,
+                    CurrentCreeiSnapshot = current,
+                    PreviousCreeiSnapshot = previous,
+                    ComponentDiagnosis = diagnosis,
+                    ConfirmedFocus = focus.ToString(),
+                    LearnerRequest = learnerRequest ?? string.Empty,
+                    LearnerRequestIsPrimaryAgenda =
+                        purpose == CoachFeedbackPurpose.LearnerSocratic &&
+                        !string.IsNullOrWhiteSpace(learnerRequest),
+                    Purpose = purpose,
+                    ConversationHistory = conversationHistory?.ToArray() ??
+                                          Array.Empty<CoachConversationTurn>(),
+                    AcceptedCriticalFeedback = acceptedCriticalFeedback ?? string.Empty,
+                    PreviousCoachFeedbackText = previousCoachFeedback ?? string.Empty,
+                    FeedbackLevel = CoachFeedbackLevel.Level2,
+                    FeedbackFormat = CoachFeedbackFormat.Scene04CreeiWorkbench,
+                    DetailedJson = true
+                }, result =>
+                {
+                    _feedbackRoutine = null;
+                    onComplete?.Invoke(result);
+                }));
+        }
+
+        void IMicroCreeiPracticeHost.RequestFeedback(
+            CreeiArgumentSnapshot current,
+            CreeiArgumentSnapshot previous,
+            CreeiComponent focus,
+            CreeiComponentDiagnosis diagnosis,
+            string learnerRequest,
+            string previousCoachFeedback,
+            CoachFeedbackPurpose purpose,
+            IReadOnlyList<CoachConversationTurn> conversationHistory,
+            string acceptedCriticalFeedback,
+            Action<CoachFeedbackResult> onComplete) =>
+            RequestFeedback(
+                current,
+                previous,
+                focus,
+                diagnosis,
+                learnerRequest,
+                previousCoachFeedback,
+                purpose,
+                conversationHistory,
+                acceptedCriticalFeedback,
+                onComplete);
+
+        public void SpeakAnna(string text, Action<bool> onComplete)
+        {
+            _microAnnaSpeechCompletion = onComplete;
+            StartCoachSpeech(text);
+            if (!_coachSpeechPending && !_coachSpeechStarted)
+                CompleteCoachSpeechCallback(false);
+        }
+
+        public void CancelMicroOperations()
+        {
+            CancelNetworkActivity();
+            _structuredDiagnosisEngine?.Cancel();
+            StopCoachSpeech();
+            StopOpponentSpeech();
+            _microLeoSpeechCompletion = null;
+            _microAnnaSpeechCompletion = null;
+        }
+
+        public void RecordMicroEvent(string eventType, object payload = null)
+        {
+            ResearchCapture.RecordEvent(eventType ?? string.Empty, "system", "learner", payload);
+            JObject values = ToEventPayload(payload);
+            _logger?.LogLocalEvent(new CoachEventRecord
+            {
+                ParticipantId = ParticipantId,
+                SessionId = SessionId,
+                OrchestrationMode = Mode,
+                Stage = "MicroCreeiWorkbench",
+                TopicId = topicId,
+                PracticeCycleId = _microCreeiController?.CurrentRoundIndex ?? 0,
+                EventType = eventType ?? string.Empty,
+                CreeiMissingOrWeakComponents = ReadPayload(values, "creei_missing_or_weak_components"),
+                CreeiGapSummary = ReadPayload(values, "creei_gap_summary"),
+                AgendaSource = ReadPayload(values, "agenda_source"),
+                AgendaText = ReadPayload(values, "agenda_text"),
+                PolicyAction = ReadPayload(values, "feedback_purpose"),
+                PolicyReason = ReadPayload(values, "policy_reason"),
+                LearnerControlAction = ReadPayload(values, "learner_control_action"),
+                RequestInputModality = ReadPayload(values, "request_input_modality"),
+                ConfirmedLearnerText = ReadPayload(values, "learner_request"),
+                CoachFeedbackType = ReadPayload(values, "feedback_purpose"),
+                CoachFeedbackText = ReadPayload(values, "feedback_text"),
+                CoachTurnIndex = ReadPayloadInt(values, "coach_turn_index"),
+                PolicyVersion = PolicyVersion,
+                DiagnosisModelVersion = DiagnosisModelVersion,
+                FeedbackModelVersion = _policyConfig?.FeedbackModelVersion ?? "coach-feedback-v4"
+            });
+        }
+
+        private static JObject ToEventPayload(object payload)
+        {
+            if (payload == null) return new JObject();
+            try
+            {
+                return JObject.FromObject(payload);
+            }
+            catch (JsonException)
+            {
+                return new JObject();
+            }
+        }
+
+        private static string ReadPayload(JObject payload, string key)
+        {
+            JToken value = payload?[key];
+            if (value == null || value.Type == JTokenType.Null) return string.Empty;
+            return value.Type is JTokenType.Array or JTokenType.Object
+                ? value.ToString(Formatting.None)
+                : value.ToString();
+        }
+
+        private static int ReadPayloadInt(JObject payload, string key)
+        {
+            JToken value = payload?[key];
+            return value != null && int.TryParse(value.ToString(), out int parsed) ? parsed : 0;
+        }
+
+        public void RecordMicroTechnicalFailure(
+            string operation,
+            string message,
+            int retryCount = 0,
+            bool recovered = false)
+        {
+            string safeOperation = string.IsNullOrWhiteSpace(operation)
+                ? "UNKNOWN"
+                : operation.Trim().ToUpperInvariant();
+            ResearchCapture.RecordTechnicalFailure(
+                "scene04_workbench_failure",
+                "CREEI_" + safeOperation + "_FAILED",
+                message ?? "Workbench operation failed.",
+                retryCount,
+                recovered);
+        }
+
+        public void AdvanceFromMicroCreei(int completedRounds, bool timedOut)
+        {
+            _microCreeiSnapshotCount = _microCreeiController?.SnapshotCount ?? 0;
+            _microCreeiCompletedRoundCount = completedRounds;
+            RecordMicroEvent("PracticeOneCompleted", new
+            {
+                committed_snapshot_count = _microCreeiSnapshotCount,
+                completed_round_count = completedRounds,
+                timed_out = timedOut
+            });
+            studyView.SetRootVisible(true);
+            EnterStage(DebatePracticeStage.FullSpeechWithFeedback);
         }
 
         private void ShowCurrentPractice(string overrideStatus = null, bool canRestartRecording = false,
@@ -1448,9 +1929,9 @@ namespace Game.Debate
                 DebatePracticeStage.MicroPractice =>
                     "Give your opening position. Press T to start or stop.",
                 DebatePracticeStage.FullSpeechWithFeedback =>
-                    "Press T and deliver one complete 90–180 second argument. Coach feedback follows automatically.",
+                    "Press T and deliver one complete 90-180 second argument. Coach feedback follows automatically.",
                 DebatePracticeStage.RevisionSpeech =>
-                    "Deliver a second complete 90–180 second argument. Anna remains silent during this assessment.",
+                    "Deliver a second complete 90-180 second argument. Anna remains silent during this assessment.",
                 _ => string.Empty
             };
             string transcript = Phase is DebatePracticePhase.TechnicalError or
@@ -1477,24 +1958,23 @@ namespace Game.Debate
             if (opponentNPC != null) opponentNPC.gameObject.SetActive(false);
             ResetVoiceCaptureState(true);
             RestorePlayer();
-            ResearchSceneCompletionStatus completion = ResearchSceneCompletionGate.EvaluatePractice(
-                _microIndependentResponseIds.Count,
-                _microRevisionResponseIds.Count,
+            ResearchSceneCompletionStatus completion =
+                ResearchSceneCompletionGate.EvaluateCreeiWorkbenchPractice(
+                _microCreeiSnapshotCount,
+                _microCreeiCompletedRoundCount,
                 !string.IsNullOrWhiteSpace(_fullSpeechResponseId),
                 !string.IsNullOrWhiteSpace(_revisionSpeechResponseId),
                 _researchConfirmedTranscriptCount,
                 _researchAudioArtifactCount,
-                _successfulDiagnosisCount,
-                _coachEpisodeCount);
+                _successfulDiagnosisCount);
             ResearchCapture.RecordEvent(
                 "practice_completed",
                 "system",
                 payload: new
                 {
                     condition = Mode.ToString(),
-                    micro_cycles_completed = Mathf.Min(
-                        _microIndependentResponseIds.Count,
-                        _microRevisionResponseIds.Count),
+                    micro_creei_snapshot_count = _microCreeiSnapshotCount,
+                    micro_creei_rounds_completed = _microCreeiCompletedRoundCount,
                     full_speech_completed = !string.IsNullOrWhiteSpace(_fullSpeechResponseId),
                     revision_speech_completed = !string.IsNullOrWhiteSpace(_revisionSpeechResponseId),
                     confirmed_transcript_count = _researchConfirmedTranscriptCount,
@@ -1920,6 +2400,7 @@ namespace Game.Debate
             studyView?.HideCoachAgenda();
             CancelNetworkActivity();
             ResetVoiceCaptureState(true);
+            StopFixedStageIntroductionSpeech(true);
             StopCoachSpeech();
             StopOpponentSpeech();
             if (opponentNPC != null) opponentNPC.gameObject.SetActive(false);

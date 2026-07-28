@@ -47,6 +47,7 @@ namespace Game.Debate
     {
         Setup,
         Introduction,
+        StageIntroduction,
         ReadyToRecord,
         Recording,
         AwaitingTranscript,
@@ -227,8 +228,7 @@ namespace Game.Debate
             return stageElapsedSeconds >= MicroPracticeSeconds;
         }
 
-        public static bool UsesOpponent(DebatePracticeStage stage) =>
-            stage == DebatePracticeStage.MicroPractice;
+        public static bool UsesOpponent(DebatePracticeStage stage) => false;
 
         public static bool ShouldKeepCursorVisible(DebatePracticePhase phase) => true;
 
@@ -270,7 +270,7 @@ namespace Game.Debate
         {
             return stage switch
             {
-                DebatePracticeStage.MicroPractice => "Challenge & Revision Lab",
+                DebatePracticeStage.MicroPractice => "CREEI Workbench",
                 DebatePracticeStage.FullSpeechWithFeedback => "Full Speech + Coach Feedback",
                 DebatePracticeStage.RevisionSpeech => "Revision Speech",
                 _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null)
@@ -280,6 +280,25 @@ namespace Game.Debate
         public static int GetStageNumber(DebatePracticeStage stage)
         {
             return Array.IndexOf(StageSequence, stage) + 1;
+        }
+
+        public static string GetSpokenIntroduction(DebatePracticeStage stage)
+        {
+            return stage switch
+            {
+                DebatePracticeStage.MicroPractice =>
+                    "In Practice One, build a five-part CREEI argument, review Coach support according to your assigned condition, and revise your argument.",
+                DebatePracticeStage.FullSpeechWithFeedback =>
+                    "In Practice Two, deliver a complete argument for at least ninety seconds, then review Coach feedback.",
+                DebatePracticeStage.RevisionSpeech =>
+                    "In Practice Three, deliver a revised argument for at least ninety seconds while Anna stays silent for the final assessment.",
+                _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null)
+            };
+        }
+
+        public static bool HasStageIntroductionTimedOut(float now, float deadline)
+        {
+            return deadline > 0f && now >= deadline;
         }
 
         public static float GetDisplayLimitSeconds(DebatePracticeStage stage)

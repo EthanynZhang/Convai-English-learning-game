@@ -392,6 +392,55 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void WindowsPlayerResearchRootLivesBesideTheExecutable()
+        {
+            string executableDirectory = Path.Combine(
+                Path.GetTempPath(), "Debatequick Portable Build");
+
+            string root = ResearchSessionPaths.BuildPortableRootDirectory(executableDirectory);
+
+            Assert.AreEqual(
+                Path.Combine(Path.GetFullPath(executableDirectory), "ResearchData", "schema_v2"),
+                root);
+        }
+
+        [Test]
+        public void WindowsPlayerResearchRootFallsBackWhenPortableDirectoryIsNotWritable()
+        {
+            string executableDirectory = Path.Combine(Path.GetTempPath(), "portable-build");
+            string persistentDirectory = Path.Combine(Path.GetTempPath(), "persistent-data");
+
+            string portable = ResearchSessionPaths.ResolveDefaultRootDirectory(
+                executableDirectory,
+                persistentDirectory,
+                true,
+                _ => true);
+            string fallback = ResearchSessionPaths.ResolveDefaultRootDirectory(
+                executableDirectory,
+                persistentDirectory,
+                true,
+                _ => false);
+
+            Assert.AreEqual(
+                Path.Combine(Path.GetFullPath(executableDirectory), "ResearchData", "schema_v2"),
+                portable);
+            Assert.AreEqual(
+                Path.Combine(Path.GetFullPath(persistentDirectory), "ResearchData", "schema_v2"),
+                fallback);
+        }
+
+        [Test]
+        public void LegacyResearchLogsShareTheSelectedResearchStorageLocation()
+        {
+            string sessionRoot = Path.Combine(
+                Path.GetTempPath(), "Debatequick", "ResearchData", "schema_v2");
+
+            Assert.AreEqual(
+                Path.Combine(Path.GetDirectoryName(sessionRoot), "legacy_logs"),
+                ResearchSessionPaths.BuildLegacyLogDirectory(sessionRoot));
+        }
+
+        [Test]
         public void EventSinkWritesOneValidJsonObjectPerLine()
         {
             string directory = Path.Combine(Path.GetTempPath(), "research-sink-" + Guid.NewGuid().ToString("N"));
@@ -740,7 +789,11 @@ namespace Game.Tests.EditMode
                 Assert.IsTrue(File.Exists(transcriptsPath));
                 Assert.IsTrue(File.Exists(technicalPath));
                 StringAssert.StartsWith("schema_version,study_id,participant_id,session_id", File.ReadAllText(sessionsPath));
-                StringAssert.Contains("event_type,actor,recipient,payload_json", File.ReadAllText(eventsPath));
+                StringAssert.Contains(
+                    "event_type,actor,recipient,epistemic_schema_version,epistemic_action," +
+                    "epistemic_actor,epistemic_initiator,epistemic_decision_owner," +
+                    "epistemic_target,epistemic_outcome,payload_json",
+                    File.ReadAllText(eventsPath));
                 StringAssert.Contains("\"{\"\"prompt\"\":\"\"classroom, real life\"\"}\"", File.ReadAllText(eventsPath));
                 StringAssert.Contains("\"Real life, \"\"because it matters\"\".\nThen classroom support helps.\"",
                     File.ReadAllText(transcriptsPath));
@@ -1790,18 +1843,18 @@ namespace Game.Tests.EditMode
             string scene04 = File.ReadAllText(Path.Combine(scripts,
                 "ThreeStageDebatePracticeController.cs"));
 
-            StringAssert.Contains("HandleRoundCompleted", scene01);
+            StringAssert.DoesNotContain("roundManager?.BeginRound()", scene01);
             StringAssert.Contains("ResearchStudyFlowNavigator.TryLoadNextScene(\"01\"", scene01);
             StringAssert.Contains("ResearchStudyFlowNavigator.TryLoadNextScene(\"03\"", scene03);
             StringAssert.Contains("ResearchStudyFlowNavigator.TryLoadNextScene(\"04\"", scene04);
             StringAssert.DoesNotContain("SceneManager.LoadScene(transferSceneName)", scene04);
 
-            int handlerIndex = scene01.IndexOf("HandleRoundCompleted", StringComparison.Ordinal);
+            int handlerIndex = scene01.IndexOf("private void CompleteLearning", StringComparison.Ordinal);
             int completeIndex = scene01.IndexOf("ResearchCapture.CompleteScene", handlerIndex,
                 StringComparison.Ordinal);
             Assert.GreaterOrEqual(handlerIndex, 0);
             Assert.Greater(completeIndex, handlerIndex,
-                "Scene 01 completion must be recorded by the NPC-round completion handler.");
+                "Scene 01 completion must be recorded when the tutorial finishes.");
         }
 
         private static void AssertFormalNextScene(

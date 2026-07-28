@@ -8,6 +8,8 @@ namespace Game.Debate
 {
     public sealed class ThreeStageDebatePracticeView : MonoBehaviour
     {
+        private const float HistoryAutoExpandedMinViewportWidth = 1440f;
+
         public event Action<string, CoachOrchestrationMode> SessionStartRequested;
         public event Action IntroductionCompleted;
         public event Action ContinueRequested;
@@ -94,7 +96,7 @@ namespace Game.Debate
             Stretch(_setupPanel.GetComponent<RectTransform>(), 20f);
             AddText(_setupPanel.transform, "Coach Agent Study Setup", 30, FontStyles.Bold);
             AddText(_setupPanel.transform,
-                "Give an initial response, then complete two micro-challenge cycles. After Leo finishes, the assigned condition determines whether Anna acts automatically, waits for you to ask, or proposes a suggestion for you to negotiate. You do not reply to Leo before this Coach decision point.", 18);
+                "Build one argument in five connected CREEI cards, then work one-to-one with Anna according to your assigned condition before revising it.", 18);
             AddText(_setupPanel.transform, "Experimental condition", 17, FontStyles.Bold);
             GameObject modeSelector = AddButtonRow(_setupPanel.transform, "Mode Selector", 52f);
             AddModeButton(modeSelector.transform, "Learner Led", CoachOrchestrationMode.LearnerLed);
@@ -256,13 +258,13 @@ namespace Game.Debate
                 _introductionOverview.text =
                     "WHO YOU WILL WORK WITH\n" +
                     "• Coach (Anna): gives feedback and guidance. How proactively she helps depends on the assigned study condition.\n" +
-                    "• Opponent Leo: challenges your argument in Practice 1. After Leo finishes, the interface moves directly to Coach Anna's focus and advice; you then record a revised response.\n\n" +
+                    "• Practice 1 is a one-to-one coaching workbench with Anna.\n\n" +
                     conditionGuidance + "\n\n" +
                     "WHAT YOU WILL DO\n" +
-                    "Practice 1 — Challenge & Revision Lab (up to 10 minutes): make a claim, hear Leo's challenges, move directly to condition-based coaching, and record a revised answer.\n" +
+                    "Practice 1 — CREEI Workbench (up to 10 minutes): complete five connected CREEI cards, interact with Anna according to your condition, and revise the structure.\n" +
                     "Practice 2 — Full Speech + Coach Feedback: deliver one complete speech for at least 90 seconds, then receive feedback.\n" +
                     "Practice 3 — Revision Speech: deliver a second complete speech for at least 90 seconds. Anna stays silent while the system records the assessment.\n\n" +
-                    "Press T to start or stop speaking. A completed transcript is accepted automatically. Use Restart Recording while speaking if you want to begin again.";
+                    "In Practice 1, select a card before pressing T so speech is added only to that card. Press T to start or stop the complete speech in Practices 2 and 3.";
             }
         }
 
@@ -414,7 +416,11 @@ namespace Game.Debate
                     ShowCoach(
                         "AI-led feedback — Anna controls when coaching continues or practice resumes.",
                         feedback,
-                        false);
+                        false,
+                        CoachLearnerAction.ApplyNextCycle);
+                    SetCoachActionLabel(
+                        CoachLearnerAction.ApplyNextCycle,
+                        "Continue to Revision");
                     break;
                 case CoachOrchestrationMode.SharedControl:
                     ShowCoach(
@@ -568,6 +574,22 @@ namespace Game.Debate
             if (_historyToggleButton != null) _historyToggleButton.gameObject.SetActive(false);
         }
 
+        public void SetRootVisible(bool visible)
+        {
+            if (_root != null) _root.SetActive(visible);
+            if (!visible)
+            {
+                _historyContextVisible = false;
+                _historyExpandedByUser = false;
+                HideCoachAgenda();
+                if (_feedbackHistoryPanel != null) _feedbackHistoryPanel.SetActive(false);
+                if (_historyToggleButton != null)
+                    _historyToggleButton.gameObject.SetActive(false);
+                return;
+            }
+            RefreshResponsiveLayout();
+        }
+
         private void LateUpdate()
         {
             if (_canvasRect == null) return;
@@ -642,9 +664,7 @@ namespace Game.Debate
             rect.anchorMax = Vector2.one;
             rect.pivot = Vector2.one;
             rect.anchoredPosition = new Vector2(-16f, -16f) * canvasUnitsPerPixel;
-            float width = viewportPixelSize.x >= 1280f
-                ? 360f
-                : Mathf.Min(360f, viewportPixelSize.x * 0.42f);
+            float width = CalculateFeedbackHistoryWidth(viewportPixelSize.x);
             rect.sizeDelta = new Vector2(
                 width * canvasUnitsPerPixel,
                 Mathf.Clamp(viewportPixelSize.y - 160f, 360f, 720f) * canvasUnitsPerPixel);
@@ -662,9 +682,11 @@ namespace Game.Debate
             rect.pivot = Vector2.up;
             float margin = 16f * canvasUnitsPerPixel;
             float left = RootRect.anchoredPosition.x + RootRect.sizeDelta.x + margin;
+            bool historyDocked = viewportPixelSize.x >= HistoryAutoExpandedMinViewportWidth;
             float right = canvasSize.x - margin -
-                          (viewportPixelSize.x >= 1280f
-                              ? 360f * canvasUnitsPerPixel
+                          (historyDocked
+                              ? CalculateFeedbackHistoryWidth(viewportPixelSize.x) *
+                                canvasUnitsPerPixel
                               : 0f);
             float availablePixelWidth = (right - left - margin) / canvasUnitsPerPixel;
             float width = Mathf.Clamp(availablePixelWidth, 300f, 620f) * canvasUnitsPerPixel;
@@ -681,7 +703,8 @@ namespace Game.Debate
             rect.anchorMin = Vector2.one;
             rect.anchorMax = Vector2.one;
             rect.pivot = Vector2.one;
-            bool belowAgenda = viewportPixelSize.x < 1280f && IsCoachAgendaVisible;
+            bool belowAgenda = viewportPixelSize.x < HistoryAutoExpandedMinViewportWidth &&
+                               IsCoachAgendaVisible;
             float top = belowAgenda ? 174f : 16f;
             rect.anchoredPosition = new Vector2(-16f, -top) * canvasUnitsPerPixel;
             rect.sizeDelta = new Vector2(132f, 44f) * canvasUnitsPerPixel;
@@ -721,13 +744,32 @@ namespace Game.Debate
 
         private void UpdateHistoryVisibility(float canvasWidth)
         {
-            bool narrow = canvasWidth < 1280f;
+            bool narrow = canvasWidth < HistoryAutoExpandedMinViewportWidth;
             bool showPanel = _historyContextVisible && (!narrow || _historyExpandedByUser);
             if (_feedbackHistoryPanel != null) _feedbackHistoryPanel.SetActive(showPanel);
             if (_historyToggleButton != null)
                 _historyToggleButton.gameObject.SetActive(_historyContextVisible && narrow);
             if (_historyToggleLabel != null)
                 _historyToggleLabel.text = _historyExpandedByUser ? "Close History" : "History";
+        }
+
+        private static float CalculateFeedbackHistoryWidth(float viewportPixelWidth)
+        {
+            float safeViewportWidth = Mathf.Max(320f, viewportPixelWidth);
+            float studyWidth = Mathf.Clamp(safeViewportWidth * 0.58f, 500f, 640f);
+            if (safeViewportWidth < HistoryAutoExpandedMinViewportWidth)
+            {
+                return Mathf.Min(studyWidth, Mathf.Max(320f, safeViewportWidth - 32f));
+            }
+
+            const float minimumAgendaWidth = 300f;
+            const float fixedMarginsAndGaps = 64f;
+            float maximumWidthWithAgenda = safeViewportWidth - studyWidth -
+                                           minimumAgendaWidth - fixedMarginsAndGaps;
+            return Mathf.Clamp(
+                Mathf.Min(studyWidth, maximumWidthWithAgenda),
+                360f,
+                640f);
         }
 
         private void BeginSession()
@@ -885,7 +927,7 @@ namespace Game.Debate
             text.fontSize = size;
             text.fontStyle = style;
             text.color = Color.white;
-            text.enableWordWrapping = true;
+            text.textWrappingMode = TextWrappingModes.Normal;
             go.GetComponent<LayoutElement>().minHeight = size + 14f;
             return text;
         }
@@ -924,7 +966,7 @@ namespace Game.Debate
             text.text = string.Empty;
             text.fontSize = 17f;
             text.color = Color.white;
-            text.enableWordWrapping = true;
+            text.textWrappingMode = TextWrappingModes.Normal;
             ContentSizeFitter fitter = content.GetComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             ScrollRect scroll = root.GetComponent<ScrollRect>();
@@ -1003,7 +1045,7 @@ namespace Game.Debate
             text.text = string.Empty;
             text.fontSize = 16f;
             text.color = Color.white;
-            text.enableWordWrapping = true;
+            text.textWrappingMode = TextWrappingModes.Normal;
             ContentSizeFitter fitter = content.GetComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             ScrollRect scroll = root.GetComponent<ScrollRect>();

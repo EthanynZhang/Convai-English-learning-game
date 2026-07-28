@@ -46,31 +46,6 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void Scene01StructuredSixTurnDebateUsesOneScreenSubtitleInsteadOfHeadBubbles()
-        {
-            Type subtitleType = typeof(DebateLearningContent).Assembly.GetType(
-                "Game.Debate.ScreenDebateSubtitleController");
-            Assert.IsNotNull(subtitleType);
-            MethodInfo targetsScene = subtitleType.GetMethod(
-                "TargetsScene", BindingFlags.Public | BindingFlags.Static);
-            Assert.IsNotNull(targetsScene);
-            Assert.IsTrue((bool)targetsScene.Invoke(null,
-                new object[] { "01Level_NPCVsNPCDebate" }));
-            Assert.IsFalse((bool)targetsScene.Invoke(null,
-                new object[] { "03Level_PlayerVsNPCDebate" }));
-            Assert.IsFalse((bool)targetsScene.Invoke(null,
-                new object[] { "04 coach Agent" }));
-
-            string roundManagerSource = File.ReadAllText(
-                "Assets/Game/Scripts/NpcDebateRoundManager.cs");
-            StringAssert.Contains("ActivateStructuredSubtitlePresentation()", roundManagerSource);
-
-            string subtitleSource = File.ReadAllText(
-                "Assets/Game/Scripts/ScreenDebateSubtitleController.cs");
-            StringAssert.Contains("DetachSpeechBubble()", subtitleSource);
-        }
-
-        [Test]
         public void Scene03And05HavePurposeCopyAndAConfirmedStartGate()
         {
             MethodInfo purpose = typeof(DebatePreparationController).GetMethod(
@@ -104,6 +79,45 @@ namespace Game.Tests.EditMode
                 new object[] { "05Level_PlayerVsNPCDebate 1" }));
             Assert.IsFalse((bool)targetsScene.Invoke(null,
                 new object[] { "04 coach Agent" }));
+        }
+
+        [Test]
+        public void Scene03And05UseTheImportedWoodenPodiumAtAFixedWorldPosition()
+        {
+            const string podiumAsset =
+                "Assets/Game/Environment/WoodenPodium/Wooden Podium PBR Low-poly 3D model.fbx";
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>(podiumAsset));
+
+            Type stationType = typeof(DebateLearningContent).Assembly.GetType(
+                "Game.Debate.DebateSpeakerStation");
+            MethodInfo calculatePosition = stationType.GetMethod(
+                "CalculateWorldPosition", BindingFlags.Public | BindingFlags.Static);
+            Assert.IsNotNull(calculatePosition);
+            Vector3 position = (Vector3)calculatePosition.Invoke(null,
+                new object[] { new Vector3(0f, 1f, -1.2f), Vector3.forward, 0f });
+            Assert.AreEqual(0f, position.y, 0.001f);
+            Assert.Greater(position.z, 0f);
+            Assert.Less(position.z, 0.5f);
+
+            string source = File.ReadAllText(
+                "Assets/Game/Scripts/DebateSpeakerStation.cs");
+            StringAssert.Contains("WoodenPodiumResourcePath", source);
+            StringAssert.Contains("transform.SetPositionAndRotation", source);
+            StringAssert.DoesNotContain("transform.SetParent(camera.transform", source);
+        }
+
+        [Test]
+        public void WoodenPodiumFacesTheLearnerIsTallerAndHasNoMicrophone()
+        {
+            string source = File.ReadAllText(
+                "Assets/Game/Scripts/DebateSpeakerStation.cs");
+            StringAssert.Contains("new Vector3(1.2f, 1.35f, 1.2f)", source);
+            StringAssert.Contains("Quaternion.Euler(0f, 180f, 0f)", source);
+            StringAssert.Contains("PodiumVerticalOffset", source);
+            StringAssert.Contains("BuiltInMicrophoneMeshName", source);
+            StringAssert.Contains("builtInMicrophone.gameObject.SetActive(false)", source);
+            StringAssert.DoesNotContain("Microphone Stand", source);
+            StringAssert.DoesNotContain("Debate Microphone", source);
         }
 
         [Test]

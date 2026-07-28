@@ -16,6 +16,8 @@ namespace Game.Debate
         public string OpponentStance = string.Empty;
         public string LearnerStatement = string.Empty;
         public string PreviousRevision = string.Empty;
+        public CreeiArgumentSnapshot CurrentCreeiSnapshot;
+        public CreeiComponent ConfirmedFocus = CreeiComponent.Claim;
         public int CycleIndex = 1;
         public OpponentChallengeDifficulty Difficulty = OpponentChallengeDifficulty.Standard;
     }
@@ -27,6 +29,7 @@ namespace Game.Debate
         public string SpeechText = string.Empty;
         public string AttackFocus = string.Empty;
         public string RawJson = string.Empty;
+        public string GenerationVersion = string.Empty;
         public string Error = string.Empty;
     }
 
@@ -121,8 +124,11 @@ namespace Game.Debate
         {
             request ??= new OpponentChallengeRequest();
             string difficulty = request.Difficulty == OpponentChallengeDifficulty.Hard
-                ? "Hard: challenge the strongest premise with one plausible counterexample or trade-off. Use 30 to 45 words."
+                ? "Hard: challenge the strongest premise with one plausible counterexample or trade-off. Use 20 to 35 words."
                 : "Standard: identify one vulnerable point and ask one direct challenge question. Use 20 to 35 words.";
+            string learnerArgument = request.CurrentCreeiSnapshot == null
+                ? "learner_statement_to_challenge:\n" + request.LearnerStatement
+                : BuildStructuredArgument(request.CurrentCreeiSnapshot);
             return
                 "You are Leo, a concise debate opponent for a CEFR B1-B2 English learner.\n" +
                 "Generate one targeted attack that the learner must answer independently before any coaching.\n" +
@@ -130,13 +136,14 @@ namespace Game.Debate
                 "Do not coach the learner, provide a model answer, mention CREEI, or use insulting language.\n" +
                 "Use one or two short English sentences and end with one direct challenge question.\n" +
                 difficulty + "\n" +
-                "Choose exactly one attack_focus from Claim, Reason, Evidence, Explanation, Impact, Ethos, Pathos, or Logos.\n" +
+                "Attack only the confirmed component below; do not select a different focus.\n" +
                 "Return one JSON object only: {\"speech_text\":\"...\",\"attack_focus\":\"...\"}.\n\n" +
                 "topic: " + request.Topic + "\n" +
                 "learner_stance: " + request.LearnerStance + "\n" +
                 "opponent_stance: " + request.OpponentStance + "\n" +
                 "challenge_cycle: " + Mathf.Clamp(request.CycleIndex, 1, 2) + "\n" +
-                "learner_statement_to_challenge:\n" + request.LearnerStatement + "\n\n" +
+                "primary_challenge_focus: " + request.ConfirmedFocus + "\n" +
+                learnerArgument + "\n\n" +
                 "previous_revision_if_any:\n" + request.PreviousRevision;
         }
 
@@ -160,7 +167,8 @@ namespace Game.Debate
                     Success = true,
                     SpeechText = speech,
                     AttackFocus = normalizedFocus,
-                    RawJson = content
+                    RawJson = content,
+                    GenerationVersion = "opponent-challenge-v2"
                 };
             }
             catch (Exception exception)
@@ -178,6 +186,16 @@ namespace Game.Debate
             return firstLineEnd >= 0 && lastFence > firstLineEnd
                 ? cleaned.Substring(firstLineEnd + 1, lastFence - firstLineEnd - 1).Trim()
                 : cleaned;
+        }
+
+        private static string BuildStructuredArgument(CreeiArgumentSnapshot snapshot)
+        {
+            return "current_creei_argument:\n" +
+                   "claim: " + snapshot.Claim + "\n" +
+                   "reason: " + snapshot.Reason + "\n" +
+                   "evidence: " + snapshot.Evidence + "\n" +
+                   "explanation: " + snapshot.Explanation + "\n" +
+                   "impact: " + snapshot.Impact;
         }
 
         private static OpponentChallengeResult Failure(string error, string rawJson = "") => new()

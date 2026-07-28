@@ -1499,14 +1499,6 @@ MonoBehaviour:
   firstSpeakerPrompt: 'The debate topic is: {0} You are the first speaker. Argue
     that reading is more important in learning English. Present your opening argument
     in under 20 seconds, then wait for the other NPC to respond.'
-  useStructuredSixTurnDebate: 0
-  useTutorialLipSyncDuringRound: 0
-  interTurnDelaySeconds: 1.5
-  speakerAudioStartGraceSeconds: 2
-  firstSpeakerStance: interaction with others is more beneficial for developing English
-    speaking skills
-  secondSpeakerStance: individual practice is more beneficial for developing English
-    speaking skills
 --- !u!4 &763742167
 Transform:
   m_ObjectHideFlags: 0
@@ -5952,18 +5944,18 @@ MonoBehaviour:
   loadTransferSceneOnCompletion: 1
   uiCanvas: {fileID: 86587544}
   coachNPC: {fileID: 269995630}
-  opponentNPC: {fileID: 1102249286}
+  opponentNPC: {fileID: 0}
   realtimeTranscriber: {fileID: 8800100003}
   studyView: {fileID: 8800100008}
   episodeController: {fileID: 8800100007}
-  coachFixedWorldPosition: {x: 1.1, y: 0, z: 2.33}
+  coachFixedWorldPosition: {x: 0.8, y: 0, z: 2.33}
   opponentFixedWorldPosition: {x: -0.25, y: 0, z: 2.5}
   openAIModel: gpt-4o-mini
   responseTimeoutSeconds: 30
   openAIBaseUrl: https://api.meding.site/v1/chat/completions
   openAIApiKeyOverride: 
   speakCoachFeedback: 1
-  speakOpponentChallenges: 1
+  speakOpponentChallenges: 0
 --- !u!114 &8800100007
 MonoBehaviour:
   m_ObjectHideFlags: 0

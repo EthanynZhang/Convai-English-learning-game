@@ -350,11 +350,11 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void AiHomeworkSceneUsesLeoAndHasNoCoachFlow()
+        public void TransferSceneExistsAndLegacyLeoFlowHasNoCoach()
         {
             string scenePath = Path.Combine(
                 GetAssetsPath(),
-                "Game/Scenes/Level_AIHomeworkCreeiDebate.unity");
+                "Game/Scenes/05Level_PlayerVsNPCDebate 1.unity");
             string source = File.ReadAllText(
                 Path.Combine(GetAssetsPath(), "Game/Scripts/AiHomeworkCreeiDebateController.cs"));
 

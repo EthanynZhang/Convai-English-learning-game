@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace Game.Debate
@@ -7,7 +5,12 @@ namespace Game.Debate
     [DisallowMultipleComponent]
     public sealed class DebateSpeakerStation : MonoBehaviour
     {
-        private readonly List<Material> _runtimeMaterials = new();
+        private const string WoodenPodiumResourcePath = "WoodenPodium/WoodenPodium";
+        private const string BuiltInMicrophoneMeshName = "desirefx.me_003";
+        private const float StationDistanceFromPlayer = 1.45f;
+        private const float PodiumVerticalOffset = 0.05f;
+        private static readonly Vector3 WoodenPodiumScale =
+            new Vector3(1.2f, 1.35f, 1.2f);
         private bool _built;
 
         public static bool TargetsScene(string sceneName)
@@ -24,6 +27,18 @@ namespace Game.Debate
             if (existing != null) return existing;
             GameObject host = new("First Person Debate Speaker Station");
             return host.AddComponent<DebateSpeakerStation>();
+        }
+
+        public static Vector3 CalculateWorldPosition(
+            Vector3 playerPosition,
+            Vector3 playerForward,
+            float floorY)
+        {
+            Vector3 forward = Vector3.ProjectOnPlane(playerForward, Vector3.up).normalized;
+            if (forward.sqrMagnitude < 0.001f) forward = Vector3.forward;
+            Vector3 position = playerPosition + forward * StationDistanceFromPlayer;
+            position.y = floorY;
+            return position;
         }
 
         private void OnEnable()
@@ -52,96 +67,48 @@ namespace Game.Debate
                 return;
             }
 
-            transform.SetParent(camera.transform, false);
-            transform.localPosition = Vector3.zero;
-            transform.localRotation = Quaternion.identity;
+            GameObject player = GameObject.FindGameObjectWithTag("Player");
+            Transform playerTransform = player != null
+                ? player.transform
+                : camera.transform.parent != null
+                    ? camera.transform.parent
+                    : camera.transform;
+            Vector3 forward = Vector3.ProjectOnPlane(playerTransform.forward, Vector3.up).normalized;
+            if (forward.sqrMagnitude < 0.001f) forward = Vector3.forward;
+            transform.SetParent(null, true);
+            transform.SetPositionAndRotation(
+                CalculateWorldPosition(playerTransform.position, forward, 0f),
+                Quaternion.LookRotation(forward, Vector3.up));
             BuildStation();
             _built = true;
         }
 
-        private void OnDestroy()
-        {
-            foreach (Material material in _runtimeMaterials)
-                if (material != null) Destroy(material);
-            _runtimeMaterials.Clear();
-        }
-
         private void BuildStation()
         {
-            Material podiumMaterial = CreateMaterial(
-                "Podium Navy", new Color(0.045f, 0.09f, 0.16f, 1f), 0.35f, 0.55f);
-            Material trimMaterial = CreateMaterial(
-                "Podium Trim", new Color(0.08f, 0.62f, 0.82f, 1f), 0.25f, 0.7f);
-            Material microphoneMaterial = CreateMaterial(
-                "Microphone", new Color(0.055f, 0.06f, 0.07f, 1f), 0.7f, 0.4f);
-
-            CreatePart(
-                PrimitiveType.Cube,
-                "Debate Podium",
-                new Vector3(0f, -0.94f, 1.40f),
-                new Vector3(0.66f, 0.50f, 0.18f),
-                Quaternion.identity,
-                podiumMaterial);
-            CreatePart(
-                PrimitiveType.Cube,
-                "Podium Top",
-                new Vector3(0f, -0.65f, 1.34f),
-                new Vector3(0.74f, 0.07f, 0.28f),
-                Quaternion.Euler(-6f, 0f, 0f),
-                trimMaterial);
-            CreatePart(
-                PrimitiveType.Cylinder,
-                "Microphone Stand",
-                new Vector3(0.16f, -0.46f, 1.24f),
-                new Vector3(0.014f, 0.15f, 0.014f),
-                Quaternion.Euler(0f, 0f, -13f),
-                microphoneMaterial);
-            CreatePart(
-                PrimitiveType.Capsule,
-                "Debate Microphone",
-                new Vector3(0.12f, -0.27f, 1.20f),
-                new Vector3(0.04f, 0.075f, 0.04f),
-                Quaternion.Euler(0f, 0f, -13f),
-                microphoneMaterial);
-        }
-
-        private void CreatePart(
-            PrimitiveType primitiveType,
-            string objectName,
-            Vector3 localPosition,
-            Vector3 localScale,
-            Quaternion localRotation,
-            Material material)
-        {
-            GameObject part = GameObject.CreatePrimitive(primitiveType);
-            part.name = objectName;
-            part.transform.SetParent(transform, false);
-            part.transform.localPosition = localPosition;
-            part.transform.localScale = localScale;
-            part.transform.localRotation = localRotation;
-            Collider collider = part.GetComponent<Collider>();
-            if (collider != null) Destroy(collider);
-            Renderer renderer = part.GetComponent<Renderer>();
-            if (renderer != null) renderer.sharedMaterial = material;
-        }
-
-        private Material CreateMaterial(
-            string materialName,
-            Color color,
-            float metallic,
-            float smoothness)
-        {
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit") ??
-                            Shader.Find("Standard");
-            Material material = new(shader)
+            GameObject podiumPrefab = Resources.Load<GameObject>(WoodenPodiumResourcePath);
+            if (podiumPrefab == null)
             {
-                name = materialName,
-                color = color
-            };
-            if (material.HasProperty("_Metallic")) material.SetFloat("_Metallic", metallic);
-            if (material.HasProperty("_Smoothness")) material.SetFloat("_Smoothness", smoothness);
-            _runtimeMaterials.Add(material);
-            return material;
+                Debug.LogError(
+                    "The wooden podium prefab is missing from Resources/" +
+                    WoodenPodiumResourcePath + ".");
+                return;
+            }
+
+            GameObject podium = Instantiate(podiumPrefab, transform, false);
+            podium.name = "Wooden Debate Podium";
+            podium.transform.localPosition =
+                new Vector3(0f, PodiumVerticalOffset, 0f);
+            podium.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+            podium.transform.localScale = WoodenPodiumScale;
+
+            Transform[] descendants = podium.GetComponentsInChildren<Transform>(true);
+            for (int index = 0; index < descendants.Length; index++)
+            {
+                Transform builtInMicrophone = descendants[index];
+                if (builtInMicrophone.name != BuiltInMicrophoneMeshName) continue;
+                builtInMicrophone.gameObject.SetActive(false);
+                break;
+            }
         }
     }
 }

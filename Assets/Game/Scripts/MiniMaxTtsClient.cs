@@ -172,7 +172,12 @@ namespace Game.Debate
             }
 #endif
 
-            return SelectApiKey(processValue, userValue, EmbeddedInternalTestApiKey);
+            InternalTestApiCredentials embeddedCredentials =
+                InternalTestApiCredentials.Load();
+            string embeddedValue = embeddedCredentials != null
+                ? embeddedCredentials.MiniMaxApiKey
+                : EmbeddedInternalTestApiKey;
+            return SelectApiKey(processValue, userValue, embeddedValue);
         }
 
         public static string SelectApiKey(

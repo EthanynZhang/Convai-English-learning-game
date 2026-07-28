@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System;
 using Convai.Scripts.Runtime.Core;
+using Convai.Scripts.Runtime.Features;
 using Convai.Scripts.Runtime.UI;
 #if CROSSTALES_RTVOICE
 using Crosstales.RTVoice;
@@ -31,8 +32,6 @@ namespace Game.Debate
         [SerializeField] private string condition = "npc_vs_npc";
 
         [Header("Debate Start")]
-        [SerializeField] private NpcDebateRoundManager roundManager;
-        [SerializeField] private bool unlockCursorDuringLearning = true;
         [SerializeField] private bool waitForLearningStart = true;
 
         [Header("Participant Onboarding")]
@@ -84,6 +83,7 @@ namespace Game.Debate
         private GameObject _researchSetupCanvas;
         private GameObject _participantOnboardingGate;
         private GameObject _learningPanel;
+        private GraphicRaycaster _learningGraphicRaycaster;
         private GameObject _startGate;
         private Button _startLearningButton;
         private TMP_Text _startAssignmentText;
@@ -117,6 +117,7 @@ namespace Game.Debate
         private LayoutElement _rationaleButtonsLayout;
         private LayoutElement _navigationLayout;
         private Button _replayButton;
+        private GameObject _replayKeyboardHint;
 
         private int _stageIndex;
         private float _stageElapsed;
@@ -168,10 +169,9 @@ namespace Game.Debate
 
             _logger = new DebateLearningLogger();
             ResolveReferences();
-            SubscribeToRoundCompletion();
+            SuppressNpcHeadBubbles();
             EnsureRealtimeTranscriber();
             SubscribeToRealtimeTranscriber();
-            roundManager?.SetWaitForExternalStart(true);
             EnsureEventSystem();
             BuildUi();
             SetLearningCursor(true);
@@ -190,6 +190,7 @@ namespace Game.Debate
                 return;
             }
 
+            SuppressNpcHeadBubbles();
             RegisterTutorialInputIsolation();
             if (waitForLearningStart)
             {
@@ -202,6 +203,8 @@ namespace Game.Debate
 
         private void Update()
         {
+            SuppressNpcHeadBubbles();
+            UpdateLearningRaycastMode();
             if (_completed)
             {
                 return;
@@ -224,7 +227,6 @@ namespace Game.Debate
             StopDemoPlayback();
             CancelVoicePracticeTranscription();
             UnsubscribeFromRealtimeTranscriber();
-            UnsubscribeFromRoundCompletion();
             UnregisterTutorialInputIsolation();
         }
 
@@ -232,46 +234,13 @@ namespace Game.Debate
         {
             CancelVoicePracticeTranscription();
             UnsubscribeFromRealtimeTranscriber();
-            UnsubscribeFromRoundCompletion();
             UnregisterTutorialInputIsolation();
-        }
-
-        public void Configure(NpcDebateRoundManager manager)
-        {
-            UnsubscribeFromRoundCompletion();
-            roundManager = manager;
-            SubscribeToRoundCompletion();
-            roundManager?.SetWaitForExternalStart(true);
-        }
-
-        private void SubscribeToRoundCompletion()
-        {
-            if (roundManager == null)
-            {
-                return;
-            }
-
-            roundManager.RoundCompleted -= HandleRoundCompleted;
-            roundManager.RoundCompleted += HandleRoundCompleted;
-        }
-
-        private void UnsubscribeFromRoundCompletion()
-        {
-            if (roundManager != null)
-            {
-                roundManager.RoundCompleted -= HandleRoundCompleted;
-            }
         }
 
         private DebateLearningStageSpec CurrentStage => DebateLearningContent.StageSequence[_stageIndex];
 
         private void ResolveReferences()
         {
-            if (roundManager == null)
-            {
-                roundManager = FindAnyObjectByType<NpcDebateRoundManager>();
-            }
-
             ConvaiNPC[] npcs = FindObjectsByType<ConvaiNPC>(FindObjectsInactive.Exclude);
             if (primaryDemoNPC == null)
             {
@@ -291,6 +260,32 @@ namespace Game.Debate
 
             EnsureAudioLipSync(primaryDemoNPC);
             EnsureAudioLipSync(secondaryDemoNPC);
+        }
+
+        private void SuppressNpcHeadBubbles()
+        {
+            DisableNpcHeadBubbles(primaryDemoNPC);
+            DisableNpcHeadBubbles(secondaryDemoNPC);
+        }
+
+        private static void DisableNpcHeadBubbles(ConvaiNPC character)
+        {
+            if (character == null) return;
+
+            foreach (NPCSpeechBubble bubble in character.GetComponentsInChildren<NPCSpeechBubble>(true))
+            {
+                if (bubble == null) continue;
+                bubble.HideSpeechBubble();
+                bubble.gameObject.SetActive(false);
+            }
+
+            foreach (ConvaiGroupNPCController npc in
+                     character.GetComponents<ConvaiGroupNPCController>())
+            {
+                if (npc == null) continue;
+                npc.DetachSpeechBubble();
+                npc.enabled = false;
+            }
         }
 
         private void EnsureRealtimeTranscriber()
@@ -383,6 +378,7 @@ namespace Game.Debate
             Canvas canvas = _root.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             canvas.sortingOrder = 100;
+            _learningGraphicRaycaster = _root.GetComponent<GraphicRaycaster>();
 
             RectTransform rootRect = _root.GetComponent<RectTransform>();
             rootRect.sizeDelta = panelSize;
@@ -402,6 +398,7 @@ namespace Game.Debate
 
             Image panelImage = panel.AddComponent<Image>();
             panelImage.color = new Color(0.93f, 0.95f, 0.94f, 0.98f);
+            panelImage.raycastTarget = false;
 
             VerticalLayoutGroup layout = panel.AddComponent<VerticalLayoutGroup>();
             layout.padding = new RectOffset(38, 38, 32, 32);
@@ -845,6 +842,7 @@ namespace Game.Debate
             _researchSetupCanvas?.SetActive(false);
             _root?.SetActive(true);
             _learningPanel?.SetActive(true);
+            SetLearningCursor(false);
             EnterStage(0);
         }
 
@@ -1448,18 +1446,8 @@ namespace Game.Debate
 
             _completed = true;
             UnregisterTutorialInputIsolation();
-            _root.SetActive(false);
+            _root?.SetActive(false);
             SetLearningCursor(false);
-            roundManager?.BeginRound();
-        }
-
-        private void HandleRoundCompleted()
-        {
-            if (_sceneCompletionRecorded)
-            {
-                return;
-            }
-
             _sceneCompletionRecorded = true;
             ResearchCapture.CompleteScene("completed");
             ResearchStudyFlowNavigator.TryLoadNextScene("01");
@@ -1949,6 +1937,7 @@ namespace Game.Debate
                 _replayButton.gameObject.SetActive(isDemo);
                 _replayButton.interactable = isDemo && !_stageNarrationInProgress;
             }
+            if (_replayKeyboardHint != null) _replayKeyboardHint.SetActive(isDemo);
 
             SetTextObjectActive(_strategyLabelText, !string.IsNullOrWhiteSpace(_strategyLabelText != null ? _strategyLabelText.text : string.Empty));
             SetTextObjectActive(_currentSpeakerText, isDemo);
@@ -1989,6 +1978,7 @@ namespace Game.Debate
                 _replayButton.gameObject.SetActive(false);
                 _replayButton.interactable = false;
             }
+            if (_replayKeyboardHint != null) _replayKeyboardHint.SetActive(false);
 
             SetTextObjectActive(_strategyLabelText, false);
             SetTextObjectActive(_currentSpeakerText, false);
@@ -2585,7 +2575,7 @@ namespace Game.Debate
                 : $"Current Strategy: {strategy}";
         }
 
-        private static void CreateKeyboardNavigationHint(Transform parent)
+        private void CreateKeyboardNavigationHint(Transform parent)
         {
             GameObject hintRoot = CreateRect("Learning Keyboard Hint", parent);
             Image hintBackground = hintRoot.AddComponent<Image>();
@@ -2607,9 +2597,12 @@ namespace Game.Debate
 
             CreateKeyboardHintItem(hintRoot.transform, "\u2190", "Previous");
             CreateKeyboardHintItem(hintRoot.transform, "\u2192", "Next / Confirm");
+            _replayKeyboardHint = CreateKeyboardHintItem(
+                hintRoot.transform, "\u2191", "Replay Demo");
+            _replayKeyboardHint.SetActive(false);
         }
 
-        private static void CreateKeyboardHintItem(Transform parent, string keySymbol, string label)
+        private static GameObject CreateKeyboardHintItem(Transform parent, string keySymbol, string label)
         {
             GameObject item = CreateRect(label + " Hint", parent);
             HorizontalLayoutGroup itemLayout = item.AddComponent<HorizontalLayoutGroup>();
@@ -2661,17 +2654,31 @@ namespace Game.Debate
             LayoutElement labelSize = labelText.GetComponent<LayoutElement>();
             labelSize.preferredWidth = 320f;
             labelSize.minWidth = 280f;
+            return item;
         }
 
         private void SetLearningCursor(bool visible)
         {
-            if (!unlockCursorDuringLearning)
+            Cursor.lockState = visible ? CursorLockMode.None : CursorLockMode.Locked;
+            Cursor.visible = visible;
+            if (_learningGraphicRaycaster != null)
+            {
+                _learningGraphicRaycaster.enabled = visible;
+            }
+        }
+
+        private void UpdateLearningRaycastMode()
+        {
+            if (_learningGraphicRaycaster == null || !_started || _completed)
             {
                 return;
             }
 
-            Cursor.lockState = visible ? CursorLockMode.None : CursorLockMode.Locked;
-            Cursor.visible = visible;
+            bool uiMode = Cursor.visible || Cursor.lockState != CursorLockMode.Locked;
+            if (_learningGraphicRaycaster.enabled != uiMode)
+            {
+                _learningGraphicRaycaster.enabled = uiMode;
+            }
         }
 
         private static GameObject CreateRect(string name, Transform parent)
@@ -2857,10 +2864,8 @@ namespace Game.Debate
                 return;
             }
 
-            NpcDebateRoundManager roundManager = UnityEngine.Object.FindAnyObjectByType<NpcDebateRoundManager>();
             GameObject watcherObject = new("NPC Debate Learning Phase Runtime Watcher");
-            NpcDebateLearningPhaseController controller = watcherObject.AddComponent<NpcDebateLearningPhaseController>();
-            controller.Configure(roundManager);
+            watcherObject.AddComponent<NpcDebateLearningPhaseController>();
         }
     }
 }

@@ -24,7 +24,7 @@ namespace Game.Debate
         public GuidedCoachResearchLogger(string directory = null)
         {
             DirectoryPath = string.IsNullOrWhiteSpace(directory)
-                ? Path.Combine(Application.persistentDataPath, "ResearchLogs")
+                ? ResearchSessionPaths.GetDefaultLegacyLogDirectory()
                 : directory;
             EventLogPath = Path.Combine(DirectoryPath, EventFileName);
             StageSummaryPath = Path.Combine(DirectoryPath, StageSummaryFileName);

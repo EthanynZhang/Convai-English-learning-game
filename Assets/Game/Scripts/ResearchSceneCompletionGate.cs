@@ -58,5 +58,29 @@ namespace Game.Debate
                 MissingRequiredData = string.Join(";", missing)
             };
         }
+
+        public static ResearchSceneCompletionStatus EvaluateCreeiWorkbenchPractice(
+            int committedSnapshotCount,
+            int completedWorkbenchRoundCount,
+            bool fullSpeechConfirmed,
+            bool revisionSpeechConfirmed,
+            int confirmedTranscriptCount,
+            int audioArtifactCount,
+            int successfulDiagnosisCount)
+        {
+            List<string> missing = new();
+            if (committedSnapshotCount < 2) missing.Add("micro_creei_snapshots");
+            if (completedWorkbenchRoundCount < 1) missing.Add("micro_creei_round");
+            if (!fullSpeechConfirmed) missing.Add("full_speech");
+            if (!revisionSpeechConfirmed) missing.Add("revision_speech");
+            if (confirmedTranscriptCount < 2) missing.Add("scene04_confirmed_transcripts");
+            if (audioArtifactCount < 2) missing.Add("scene04_audio_artifacts");
+            if (successfulDiagnosisCount < 2) missing.Add("scene04_diagnoses");
+            return new ResearchSceneCompletionStatus
+            {
+                DataComplete = missing.Count == 0,
+                MissingRequiredData = string.Join(";", missing)
+            };
+        }
     }
 }

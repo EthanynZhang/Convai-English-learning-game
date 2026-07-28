@@ -425,6 +425,18 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void DiagnosisSchemaAvoidsUnsupportedUniqueItemsKeyword()
+        {
+            JObject schema = CoachDiagnosisEngine.BuildStructuredOutputSchema();
+            JObject creeiComponents =
+                (JObject)schema["properties"]?["creei_missing_or_weak_components"];
+
+            Assert.IsNotNull(creeiComponents);
+            Assert.IsNull(creeiComponents["uniqueItems"],
+                "The relay rejects uniqueItems in strict Structured Outputs schemas.");
+        }
+
+        [Test]
         public void DiagnosisParserSortsAndTruncatesSuggestionsWithoutPadding()
         {
             CoachDiagnosisResult result = CoachDiagnosisEngine.ParseStructuredResult(@"{

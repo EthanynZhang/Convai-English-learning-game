@@ -137,9 +137,9 @@ namespace Game.Debate
         public float AiLedActionWindowSeconds = 15f;
         public float LearnerSpeechMinimumSeconds = 60f;
         public float LearnerSpeechMaximumSeconds = 90f;
-        public string PolicyVersion = "three-mode-v1";
-        public string DiagnosisModelVersion = "coach-diagnosis-v2";
-        public string FeedbackModelVersion = "coach-feedback-v2";
+        public string PolicyVersion = "three-mode-v3";
+        public string DiagnosisModelVersion = "coach-diagnosis-local-v3";
+        public string FeedbackModelVersion = "coach-feedback-v4";
 
         public static CoachPolicyConfig CreateDefault() => new();
     }
@@ -156,6 +156,8 @@ namespace Game.Debate
         public string LearnerSide = string.Empty;
         public string OpponentUtteranceText = string.Empty;
         public string PlayerUtteranceText = string.Empty;
+        public CreeiArgumentSnapshot CurrentCreeiSnapshot;
+        public CreeiArgumentSnapshot PreviousCreeiSnapshot;
         public string PreviousConfirmedStages = string.Empty;
         public string PreviousConfirmedAttempt = string.Empty;
         public string SelectedStrategy = "Any";
@@ -183,6 +185,8 @@ namespace Game.Debate
         public string RevisionImprovementSummary = string.Empty;
         public string[] CreeiMissingOrWeakComponents = Array.Empty<string>();
         public string CreeiGapSummary = string.Empty;
+        public CreeiComponentDiagnosis[] ComponentDiagnoses =
+            Array.Empty<CreeiComponentDiagnosis>();
         public CoachSuggestion[] RankedSuggestions = Array.Empty<CoachSuggestion>();
         public string RawJson = string.Empty;
         public string ModelVersion = string.Empty;

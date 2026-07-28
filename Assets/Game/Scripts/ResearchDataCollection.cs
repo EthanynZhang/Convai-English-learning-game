@@ -518,13 +518,19 @@ namespace Game.Debate
                 {
                     "schema_version", "participant_id", "session_id", "condition", "scene_id",
                     "study_stage", "topic_id", "event_id", "parent_event_id",
-                    "event_timestamp_utc", "event_type", "actor", "recipient", "payload_json"
+                    "event_timestamp_utc", "event_type", "actor", "recipient",
+                    "epistemic_schema_version", "epistemic_action", "epistemic_actor",
+                    "epistemic_initiator", "epistemic_decision_owner", "epistemic_target",
+                    "epistemic_outcome", "payload_json"
                 },
                 rows.Select(row => new[]
                 {
                     I(row.SchemaVersion), row.ParticipantId, row.SessionId, row.Condition, row.SceneId,
                     row.StudyStage, row.TopicId, row.EventId, row.ParentEventId,
-                    row.EventTimestampUtc, row.EventType, row.Actor, row.Recipient, row.PayloadJson
+                    row.EventTimestampUtc, row.EventType, row.Actor, row.Recipient,
+                    row.EpistemicSchemaVersion, row.EpistemicAction, row.EpistemicActor,
+                    row.EpistemicInitiator, row.EpistemicDecisionOwner, row.EpistemicTarget,
+                    row.EpistemicOutcome, row.PayloadJson
                 }));
         }
 

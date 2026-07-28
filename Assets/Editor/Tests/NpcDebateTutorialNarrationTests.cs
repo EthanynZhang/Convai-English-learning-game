@@ -400,5 +400,56 @@ namespace Game.Tests.EditMode
             Assert.IsFalse(DebateLearningContent.StageSequence.Any(stage =>
                 stage.Title.Contains("Micro Practice 1", StringComparison.OrdinalIgnoreCase)));
         }
+
+        [Test]
+        public void TranscriptGuidePointsToF5SceneMenuAndDisablesConvaiSettingsShortcut()
+        {
+            string[] transcriptPrefabs =
+            {
+                "Convai Transcript Canvas - Subtitle.prefab",
+                "Convai Transcript Canvas - QA.prefab",
+                "Convai Transcript Canvas - Chat.prefab"
+            };
+
+            foreach (string prefabName in transcriptPrefabs)
+            {
+                string prefab = File.ReadAllText(Path.Combine(
+                    "Assets", "Convai", "Prefabs", "Transcript UI Canvases", "Default", prefabName));
+                StringAssert.Contains("m_text: Scene Menu [F05]", prefab, prefabName);
+                StringAssert.DoesNotContain("Settings [F10]", prefab, prefabName);
+            }
+
+            string inputPrefab = File.ReadAllText(Path.Combine(
+                "Assets", "Convai", "Prefabs", "Utils", "Convai Input Manager.prefab"));
+            int settingsAction = inputPrefab.IndexOf("SettingsKeyAction:", StringComparison.Ordinal);
+            Assert.GreaterOrEqual(settingsAction, 0);
+            string settingsSection = inputPrefab.Substring(settingsAction);
+            StringAssert.Contains("m_SingletonActionBindings: []", settingsSection);
+            StringAssert.DoesNotContain("m_Path: <Keyboard>/f5", settingsSection);
+            StringAssert.DoesNotContain("m_Path: <Keyboard>/f10", inputPrefab);
+
+            string inputManagerSource = File.ReadAllText(Path.Combine(
+                "Assets", "Convai", "Scripts", "Runtime", "Core", "ConvaiInputManager.cs"));
+            StringAssert.Contains("OpenSettingPanelKey = KeyCode.None", inputManagerSource);
+            StringAssert.DoesNotContain("OpenSettingPanelKey = KeyCode.F10", inputManagerSource);
+
+            string inputActions = File.ReadAllText(Path.Combine(
+                "Assets", "Convai", "Resources", "Controls.inputactions"));
+            string generatedControls = File.ReadAllText(Path.Combine(
+                "Assets", "Convai", "Resources", "Controls.cs"));
+            StringAssert.DoesNotContain("<Keyboard>/f10", inputActions);
+            StringAssert.DoesNotContain("<Keyboard>/f10", generatedControls);
+
+            string sceneMenuSource = File.ReadAllText(Path.Combine(
+                "Assets", "Game", "Scripts", "DebugSceneJumpMenu.cs"));
+            StringAssert.Contains("STUDY SCENE MENU", sceneMenuSource);
+            StringAssert.Contains("WasF5Pressed", sceneMenuSource);
+            StringAssert.Contains("WasEscapePressed", sceneMenuSource);
+            StringAssert.Contains("Press F5 or Esc to close", sceneMenuSource);
+            StringAssert.Contains("Exit Application", sceneMenuSource);
+            StringAssert.Contains("Application.Quit()", sceneMenuSource);
+            StringAssert.DoesNotContain("DEBUG SCENE JUMP", sceneMenuSource);
+            StringAssert.DoesNotContain("bypass formal research", sceneMenuSource);
+        }
     }
 }

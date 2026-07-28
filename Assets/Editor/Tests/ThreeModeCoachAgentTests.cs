@@ -822,6 +822,23 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void CoachFeedbackRetriesOnlyTransientNetworkFailures()
+        {
+            Assert.IsTrue(DebateCoachFeedbackGenerator.IsRetryableFeedbackFailure(
+                UnityEngine.Networking.UnityWebRequest.Result.ConnectionError, 0));
+            Assert.IsTrue(DebateCoachFeedbackGenerator.IsRetryableFeedbackFailure(
+                UnityEngine.Networking.UnityWebRequest.Result.ProtocolError, 408));
+            Assert.IsTrue(DebateCoachFeedbackGenerator.IsRetryableFeedbackFailure(
+                UnityEngine.Networking.UnityWebRequest.Result.ProtocolError, 429));
+            Assert.IsTrue(DebateCoachFeedbackGenerator.IsRetryableFeedbackFailure(
+                UnityEngine.Networking.UnityWebRequest.Result.ProtocolError, 503));
+            Assert.IsFalse(DebateCoachFeedbackGenerator.IsRetryableFeedbackFailure(
+                UnityEngine.Networking.UnityWebRequest.Result.ProtocolError, 401));
+            Assert.IsFalse(DebateCoachFeedbackGenerator.IsRetryableFeedbackFailure(
+                UnityEngine.Networking.UnityWebRequest.Result.ProtocolError, 403));
+        }
+
+        [Test]
         public void DiagnosisReturnsAConditionBlindWholeCreeiGapSummary()
         {
             JObject schema = CoachDiagnosisEngine.BuildStructuredOutputSchema();
@@ -865,8 +882,8 @@ namespace Game.Tests.EditMode
         public void AgendaAndCreeiGapFieldsAreVersionedAndDeclaredInTheCoachEventCsv()
         {
             CoachPolicyConfig config = CoachPolicyConfig.CreateDefault();
-            Assert.AreEqual("coach-diagnosis-v2", config.DiagnosisModelVersion);
-            Assert.AreEqual("coach-feedback-v2", config.FeedbackModelVersion);
+            Assert.AreEqual("coach-diagnosis-local-v3", config.DiagnosisModelVersion);
+            Assert.AreEqual("coach-feedback-v4", config.FeedbackModelVersion);
             foreach (string field in new[]
                      {
                          "CreeiMissingOrWeakComponents",

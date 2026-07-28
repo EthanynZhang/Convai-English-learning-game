@@ -36,6 +36,12 @@ namespace Game.Debate
         private int _researchConfirmedTranscriptCount;
         private int _researchAudioArtifactCount;
         private bool _completionDataComplete;
+        private bool _localAttemptStarted;
+        private bool _researchSessionActiveForAttempt;
+        private bool _researchAttemptLogged;
+        private bool _hasValidSavedAttempt;
+        private bool _timeoutReached;
+        private bool _finishWhenCurrentAttemptEnds;
 
         public float RemainingSeconds { get; private set; }
         public bool IsPracticeActive => _practiceActive;
@@ -80,7 +86,7 @@ namespace Game.Debate
 
             if (_roundManager != null && _roundManager.HasRoundEnded)
             {
-                CompletePractice();
+                RequestPracticeCompletion();
                 return;
             }
 
@@ -109,6 +115,12 @@ namespace Game.Debate
             _researchConfirmedTranscriptCount = 0;
             _researchAudioArtifactCount = 0;
             _completionDataComplete = false;
+            _localAttemptStarted = false;
+            _researchSessionActiveForAttempt = false;
+            _researchAttemptLogged = false;
+            _hasValidSavedAttempt = false;
+            _timeoutReached = false;
+            _finishWhenCurrentAttemptEnds = false;
             SetActive(_continueButton != null ? _continueButton.gameObject : null, false);
             RemainingSeconds = _roundManager != null
                 ? Mathf.Max(0f, _roundManager.RoundDurationSeconds)
@@ -165,6 +177,36 @@ namespace Game.Debate
             return practiceActive && !isFinalizing;
         }
 
+        public static bool HasValidSavedAttempt(
+            bool recordingStarted,
+            string transcript,
+            int pcmByteCount,
+            bool requireResearchPersistence,
+            bool attemptLogged,
+            bool transcriptLogged,
+            bool audioLogged)
+        {
+            bool localCaptureComplete = recordingStarted &&
+                                        !string.IsNullOrWhiteSpace(transcript) &&
+                                        pcmByteCount > 0;
+            return localCaptureComplete &&
+                   (!requireResearchPersistence ||
+                    (attemptLogged && transcriptLogged && audioLogged));
+        }
+
+        public static bool CanFinishEarly(
+            bool hasValidSavedAttempt,
+            bool voiceSessionActive,
+            bool voiceFinalizing)
+        {
+            return hasValidSavedAttempt && !voiceSessionActive && !voiceFinalizing;
+        }
+
+        public static bool ShouldRemainOpenAtTimeout(bool hasValidSavedAttempt)
+        {
+            return !hasValidSavedAttempt;
+        }
+
         public static string AppendTranscriptEntry(string existingTranscript, string transcript)
         {
             string existing = existingTranscript?.TrimEnd() ?? string.Empty;
@@ -179,7 +221,35 @@ namespace Game.Debate
                 : existing + "\n\u2022 " + entry;
         }
 
-        private void CompletePractice()
+        private void RequestPracticeCompletion()
+        {
+            if (!_practiceActive) return;
+            if (_voiceSessionActive || _voiceFinalizing ||
+                (_realtimeTranscriber != null &&
+                 (_realtimeTranscriber.IsRecording || _realtimeTranscriber.IsConnecting)))
+            {
+                _finishWhenCurrentAttemptEnds = true;
+                if (!_voiceFinalizing && _realtimeTranscriber != null &&
+                    _realtimeTranscriber.IsRecording)
+                {
+                    _voiceFinalizing = true;
+                    SetStatus("Time is complete. Finalizing your current recording...");
+                    _realtimeTranscriber.StopSession();
+                }
+                return;
+            }
+
+            if (ShouldRemainOpenAtTimeout(_hasValidSavedAttempt))
+            {
+                _timeoutReached = true;
+                SetStatus("Time is complete. Make and save one valid recording before continuing.");
+                return;
+            }
+
+            CompletePractice("time_limit");
+        }
+
+        private void CompletePractice(string completionReason)
         {
             if (!_practiceActive)
             {
@@ -188,18 +258,27 @@ namespace Game.Debate
 
             _practiceActive = false;
             RemainingSeconds = 0f;
-            StopAndPreserveCurrentTranscript();
             UpdateCountdownText();
             SetStatus("Three-minute speaking practice complete.");
             _roundManager?.SetPlayerPracticeInputSuppressed(false);
             string sceneId = GetResearchSceneId();
             bool noCoachVerified = sceneId != "05" ||
                                    !TransferDebateStageGuard.HasCoachContractViolation();
+            bool requiresResearchPersistence = HasActiveResearchSession();
+            int effectiveAttemptCount = requiresResearchPersistence
+                ? _researchAttemptCount
+                : (_hasValidSavedAttempt ? 1 : 0);
+            int effectiveTranscriptCount = requiresResearchPersistence
+                ? _researchConfirmedTranscriptCount
+                : (_hasValidSavedAttempt ? 1 : 0);
+            int effectiveAudioCount = requiresResearchPersistence
+                ? _researchAudioArtifactCount
+                : (_hasValidSavedAttempt ? 1 : 0);
             ResearchSceneCompletionStatus completion = ResearchSceneCompletionGate.EvaluateOral(
                 sceneId,
-                _researchAttemptCount,
-                _researchConfirmedTranscriptCount,
-                _researchAudioArtifactCount,
+                effectiveAttemptCount,
+                effectiveTranscriptCount,
+                effectiveAudioCount,
                 noCoachVerified);
             ResearchCapture.RecordEvent(
                 sceneId == "05" ? "transfer_completed" : "baseline_completed",
@@ -211,6 +290,9 @@ namespace Game.Debate
                     audio_artifact_count = _researchAudioArtifactCount,
                     transcript_available = _researchConfirmedTranscriptCount > 0,
                     audio_available = _researchAudioArtifactCount > 0,
+                    local_valid_saved_attempt = _hasValidSavedAttempt,
+                    research_session_active = requiresResearchPersistence,
+                    completion_reason = completionReason,
                     no_coach_verified = noCoachVerified,
                     completion_status = completion.DataComplete ? "completed" : "incomplete",
                     missing_required_data = completion.MissingRequiredData,
@@ -234,6 +316,32 @@ namespace Game.Debate
             }
 
             ResearchStudyFlowNavigator.TryLoadNextScene("03", true);
+        }
+
+        public void FinishEarlyAndContinue()
+        {
+            if (GetResearchSceneId() != "03" ||
+                !CanFinishEarly(_hasValidSavedAttempt, _voiceSessionActive, _voiceFinalizing))
+                return;
+
+            ResearchCapture.RecordEvent("baseline_early_finish_selected", "learner", payload: new
+            {
+                remaining_seconds = RemainingSeconds,
+                attempt_count = _researchAttemptCount,
+                research_session_active = HasActiveResearchSession()
+            });
+            CompletePractice("early_finish");
+            ContinueToNextScene();
+        }
+
+        private void HandlePrimaryAction()
+        {
+            if (_practiceActive)
+            {
+                FinishEarlyAndContinue();
+                return;
+            }
+            ContinueToNextScene();
         }
 
         private void ShowContinueButton(ResearchSceneCompletionStatus completion)
@@ -272,7 +380,12 @@ namespace Game.Debate
             UpdateCountdownText();
             if (RemainingSeconds <= 0f)
             {
-                CompletePractice();
+                RemainingSeconds = 0f;
+                if (!_timeoutReached)
+                {
+                    _timeoutReached = true;
+                    RequestPracticeCompletion();
+                }
             }
         }
 
@@ -327,8 +440,11 @@ namespace Game.Debate
         {
             _roundManager?.NotifyPlayerSpeechStarted();
             _researchRecordingStartedAt = Time.realtimeSinceStartup;
+            _localAttemptStarted = true;
+            _researchSessionActiveForAttempt = HasActiveResearchSession();
             _researchAttemptId = ResearchCapture.BeginAttempt(GetResearchResponseRole());
-            if (!string.IsNullOrWhiteSpace(_researchAttemptId)) _researchAttemptCount++;
+            _researchAttemptLogged = !string.IsNullOrWhiteSpace(_researchAttemptId);
+            if (_researchAttemptLogged) _researchAttemptCount++;
             if (_practiceActive)
             {
                 SetStatus("Listening. Speak your argument, then press T to stop.");
@@ -356,8 +472,14 @@ namespace Game.Debate
             _voiceFinalizing = false;
             string confirmed = string.IsNullOrWhiteSpace(transcript) ? _latestTranscript : transcript;
             CommitTranscript(confirmed);
-            CompleteResearchAttempt(confirmed, "transcription_completed");
-            SetStatus("Saved. Press T to add another part of your argument.");
+            _hasValidSavedAttempt |= CompleteResearchAttempt(confirmed, "transcription_completed");
+            if (_finishWhenCurrentAttemptEnds)
+            {
+                _finishWhenCurrentAttemptEnds = false;
+                RequestPracticeCompletion();
+                return;
+            }
+            ShowSavedAttemptActions();
         }
 
         private void HandleTranscriptionFailed(string error)
@@ -382,6 +504,7 @@ namespace Game.Debate
                 "XFYUN_TRANSCRIPTION_FAILED",
                 error ?? "Speech recognition failed.");
             _researchAttemptId = string.Empty;
+            _finishWhenCurrentAttemptEnds = false;
             SetStatus("Speech recognition failed: " + error + " Press T to try again.");
         }
 
@@ -396,7 +519,7 @@ namespace Game.Debate
             _completedTranscript = updated;
         }
 
-        private void CompleteResearchAttempt(string transcript, string stopReason)
+        private bool CompleteResearchAttempt(string transcript, string stopReason)
         {
             float duration = CurrentResearchRecordingDuration();
             ResearchCapture.StopAttempt(_researchAttemptId, duration, stopReason);
@@ -411,8 +534,21 @@ namespace Game.Debate
                 transcript,
                 duration);
             if (transcriptRecord != null) _researchConfirmedTranscriptCount++;
+            int pcmByteCount = _realtimeTranscriber?.LastAudioCapture?.Pcm16Bytes?.Length ?? 0;
+            bool valid = HasValidSavedAttempt(
+                _localAttemptStarted,
+                transcript,
+                pcmByteCount,
+                _researchSessionActiveForAttempt,
+                _researchAttemptLogged,
+                transcriptRecord != null,
+                audio != null);
             _researchAttemptId = string.Empty;
             _researchRecordingStartedAt = 0f;
+            _localAttemptStarted = false;
+            _researchSessionActiveForAttempt = false;
+            _researchAttemptLogged = false;
+            return valid;
         }
 
         private float CurrentResearchRecordingDuration()
@@ -440,6 +576,42 @@ namespace Game.Debate
                 out _)
                 ? sceneId
                 : string.Empty;
+        }
+
+        private static bool HasActiveResearchSession()
+        {
+            ResearchSessionManager manager = ResearchSessionManager.Instance != null
+                ? ResearchSessionManager.Instance
+                : FindAnyObjectByType<ResearchSessionManager>(FindObjectsInactive.Include);
+            return manager != null && manager.HasActiveSession;
+        }
+
+        private static string GetDebateTopic()
+        {
+            return GetResearchSceneId() == "05"
+                ? ResearchSceneContract.TransferTopic
+                : ResearchSceneContract.PracticeTopic;
+        }
+
+        private void ShowSavedAttemptActions()
+        {
+            bool canFinish = GetResearchSceneId() == "03" &&
+                             CanFinishEarly(_hasValidSavedAttempt,
+                                 _voiceSessionActive, _voiceFinalizing);
+            if (_continueButton != null)
+            {
+                _continueButton.gameObject.SetActive(canFinish);
+                _continueButton.interactable = canFinish;
+                TMP_Text label = _continueButton.GetComponentInChildren<TMP_Text>(true);
+                if (label != null) label.text = "Finish Early & Continue to Scene 04";
+            }
+
+            if (_hasValidSavedAttempt && !HasActiveResearchSession())
+                SetStatus("Saved for this debug run. Finish early or press T to add another part.");
+            else if (_hasValidSavedAttempt)
+                SetStatus("Saved. Finish early or press T to add another part of your argument.");
+            else
+                SetStatus("The response was captured but could not be saved completely. Press T to retry.");
         }
 
         private void UpdateCountdownText()
@@ -479,6 +651,7 @@ namespace Game.Debate
             layout.childForceExpandHeight = false;
 
             AddText(panel.transform, "Your 3-Minute Speaking Practice", 30, FontStyles.Bold, 46f);
+            CreateTopicPanel(panel.transform, GetDebateTopic());
             _countdownText = AddText(panel.transform, string.Empty, 23, FontStyles.Bold, 32f);
             AddText(
                 panel.transform,
@@ -490,7 +663,7 @@ namespace Game.Debate
             _continueButton = AddButton(
                 panel.transform,
                 "Continue to Scene 04  |  Coach Practice",
-                ContinueToNextScene);
+                HandlePrimaryAction);
             _continueButton.gameObject.SetActive(false);
 
             _practiceRoot.SetActive(false);
@@ -505,9 +678,33 @@ namespace Game.Debate
             rect.anchorMax = new Vector2(0f, 1f);
             rect.pivot = new Vector2(0f, 1f);
             rect.anchoredPosition = new Vector2(30f, -30f);
-            rect.sizeDelta = new Vector2(700f, 390f);
+            rect.sizeDelta = new Vector2(700f, 480f);
             panel.GetComponent<Image>().color = new Color(0.035f, 0.055f, 0.08f, 0.96f);
             return panel;
+        }
+
+        private static void CreateTopicPanel(Transform parent, string topic)
+        {
+            GameObject panel = new("Debate Topic Panel", typeof(RectTransform), typeof(Image),
+                typeof(LayoutElement), typeof(VerticalLayoutGroup));
+            panel.transform.SetParent(parent, false);
+            panel.GetComponent<Image>().color = new Color(0.035f, 0.20f, 0.34f, 0.96f);
+            LayoutElement size = panel.GetComponent<LayoutElement>();
+            size.minHeight = 92f;
+            size.preferredHeight = 92f;
+            VerticalLayoutGroup layout = panel.GetComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset(16, 16, 10, 10);
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = true;
+            layout.childForceExpandHeight = false;
+            TMP_Text topicText = AddText(
+                panel.transform,
+                "DEBATE TOPIC\n" + (topic?.Trim() ?? string.Empty),
+                18,
+                FontStyles.Bold,
+                72f);
+            topicText.color = new Color(0.42f, 0.84f, 1f);
         }
 
         private static TMP_Text AddText(

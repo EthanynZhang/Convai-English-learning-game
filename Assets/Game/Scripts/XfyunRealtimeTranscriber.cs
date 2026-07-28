@@ -110,8 +110,18 @@ namespace Game.Debate
                 return;
             }
 
-            string appId = ReadCredential("XFYUN_RTASR_APP_ID", AppIdPlayerPrefsKey, ProjectAppId);
-            string apiKey = ReadCredential("XFYUN_RTASR_API_KEY", ApiKeyPlayerPrefsKey, ProjectApiKey);
+            InternalTestApiCredentials embeddedCredentials =
+                InternalTestApiCredentials.Load();
+            string embeddedAppId = embeddedCredentials != null
+                ? embeddedCredentials.XfyunAppId
+                : ProjectAppId;
+            string embeddedApiKey = embeddedCredentials != null
+                ? embeddedCredentials.XfyunApiKey
+                : ProjectApiKey;
+            string appId = ReadCredential(
+                "XFYUN_RTASR_APP_ID", AppIdPlayerPrefsKey, embeddedAppId);
+            string apiKey = ReadCredential(
+                "XFYUN_RTASR_API_KEY", ApiKeyPlayerPrefsKey, embeddedApiKey);
             if (string.IsNullOrWhiteSpace(appId) || string.IsNullOrWhiteSpace(apiKey))
             {
                 SessionFailed?.Invoke(

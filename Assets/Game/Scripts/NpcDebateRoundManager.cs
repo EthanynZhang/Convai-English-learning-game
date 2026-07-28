@@ -1,56 +1,12 @@
 using System;
 using System.Collections;
 using Convai.Scripts.Runtime.Features;
-using Convai.Scripts.Runtime.Features.LipSync;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace Game.Debate
 {
-    public static class StructuredNpcDebatePlan
-    {
-        public const int TurnCount = 6;
-
-        private static readonly string[] Strategies =
-        {
-            "Logos", "Logos", "Ethos", "Ethos", "Pathos", "Pathos"
-        };
-
-        public static string GetStrategyForTurn(int zeroBasedTurnIndex)
-        {
-            if (zeroBasedTurnIndex < 0 || zeroBasedTurnIndex >= TurnCount)
-            {
-                throw new ArgumentOutOfRangeException(nameof(zeroBasedTurnIndex));
-            }
-
-            return Strategies[zeroBasedTurnIndex];
-        }
-
-        public static string BuildTurnPrompt(
-            string topic,
-            string speakerName,
-            string stance,
-            string strategy,
-            int turnNumber,
-            string previousResponse)
-        {
-            string responseContext = string.IsNullOrWhiteSpace(previousResponse)
-                ? "This is the opening argument."
-                : $"The other speaker just said: \"{previousResponse.Trim()}\" Respond directly to that argument.";
-
-            return
-                $"Debate topic: {topic} " +
-                $"You are {speakerName}, speaking on turn {turnNumber} of {TurnCount}. " +
-                $"Your position is that {stance}. Use {strategy} as the main persuasive strategy. " +
-                $"{responseContext} Give one concise CREEI response in this exact functional order: " +
-                "Claim, Reason, Evidence, Explanation, Impact. " +
-                "Speak at a calm, measured pace with a brief natural pause between each CREEI part. " +
-                "Use clear English suitable for an English learner. Output only the debate response, " +
-                "without labels, stage directions, or meta commentary.";
-        }
-    }
-
     public class NpcDebateRoundManager : MonoBehaviour
     {
         public const bool DefaultUseRoundTimer = true;
@@ -107,24 +63,9 @@ namespace Game.Debate
         private string firstSpeakerPrompt =
             "The debate topic is: {0} You are the first speaker. Argue that reading is more important in learning English. Present your opening argument in under 20 seconds, then wait for the other NPC to respond.";
 
-        [Header("Structured Six-Turn Debate")]
-        [SerializeField] private bool useStructuredSixTurnDebate;
-        [SerializeField] private bool useTutorialLipSyncDuringRound;
-        [SerializeField] private float interTurnDelaySeconds = 1.5f;
-        [SerializeField] private float speakerAudioStartGraceSeconds = 2f;
-        [TextArea(2, 3)]
-        [SerializeField]
-        private string firstSpeakerStance = "interaction with others is more beneficial for developing English speaking skills";
-        [TextArea(2, 3)]
-        [SerializeField]
-        private string secondSpeakerStance = "individual practice is more beneficial for developing English speaking skills";
-
         private Coroutine _roundRoutine;
         private Coroutine _speechBubbleStyleRoutine;
-        private Coroutine _structuredTransitionRoutine;
         private float _remainingSeconds;
-        private int _completedStructuredTurns;
-        private Func<string, ConvaiGroupNPCController, bool> _previousRelayInterceptor;
         private bool _roundCompletionRaised;
 
         public bool IsRoundRunning { get; private set; }
@@ -187,33 +128,8 @@ namespace Game.Debate
                 StopCoroutine(_roundRoutine);
             }
 
-            _completedStructuredTurns = 0;
             _roundCompletionRaised = false;
-            ActivateStructuredSubtitlePresentation();
-            ConfigureRoundLipSync();
             _roundRoutine = StartCoroutine(RunRound());
-        }
-
-        private void ActivateStructuredSubtitlePresentation()
-        {
-            if (!useStructuredSixTurnDebate || conversationManager == null)
-            {
-                return;
-            }
-
-            ScreenDebateSubtitleController subtitleController =
-                GetComponent<ScreenDebateSubtitleController>();
-            if (subtitleController == null)
-            {
-                subtitleController = gameObject.AddComponent<ScreenDebateSubtitleController>();
-            }
-
-            subtitleController.ConfigureForStructuredDebate(conversationManager);
-        }
-
-        private void OnDestroy()
-        {
-            RestoreRelayInterceptor();
         }
 
         private IEnumerator RunRound()
@@ -221,7 +137,6 @@ namespace Game.Debate
             IsRoundRunning = true;
             HasRoundEnded = false;
             _remainingSeconds = roundDurationSeconds;
-            ConfigureStructuredRelay();
 
             ShowRefereeCaption(FormatDebateText(refereeOpeningLine));
             PlayRefereeClip(refereeOpeningClip);
@@ -237,10 +152,7 @@ namespace Game.Debate
 
             if (!useRoundTimer)
             {
-                if (!useStructuredSixTurnDebate)
-                {
-                    HideRefereeCaption();
-                }
+                HideRefereeCaption();
 
                 while (IsRoundRunning)
                 {
@@ -294,106 +206,7 @@ namespace Game.Debate
                 }
             }
 
-            if (useStructuredSixTurnDebate)
-            {
-                ShowStructuredTurnStatus(1, firstSpeaker);
-                StartCoroutine(SendStructuredTurnPrompt(firstSpeaker, 0, string.Empty));
-                return;
-            }
-
             StartCoroutine(SendFirstSpeakerPrompt());
-        }
-
-        private void ConfigureStructuredRelay()
-        {
-            if (!useStructuredSixTurnDebate || conversationManager == null)
-            {
-                return;
-            }
-
-            _previousRelayInterceptor = conversationManager.RelayInterceptor;
-            conversationManager.RelayInterceptor = InterceptStructuredRelay;
-        }
-
-        private void RestoreRelayInterceptor()
-        {
-            if (conversationManager != null && conversationManager.RelayInterceptor == InterceptStructuredRelay)
-            {
-                conversationManager.RelayInterceptor = _previousRelayInterceptor;
-            }
-
-            _previousRelayInterceptor = null;
-        }
-
-        private bool InterceptStructuredRelay(string message, ConvaiGroupNPCController sender)
-        {
-            if (!useStructuredSixTurnDebate || !IsRoundRunning || sender == null)
-            {
-                return false;
-            }
-
-            _completedStructuredTurns++;
-            if (_structuredTransitionRoutine != null)
-            {
-                StopCoroutine(_structuredTransitionRoutine);
-            }
-
-            if (_completedStructuredTurns >= StructuredNpcDebatePlan.TurnCount)
-            {
-                _structuredTransitionRoutine = StartCoroutine(FinishStructuredDebateAfterSpeaker(sender));
-            }
-            else
-            {
-                _structuredTransitionRoutine = StartCoroutine(
-                    ContinueStructuredDebateAfterSpeaker(sender, message));
-            }
-
-            return true;
-        }
-
-        private IEnumerator ContinueStructuredDebateAfterSpeaker(
-            ConvaiGroupNPCController sender,
-            string previousResponse)
-        {
-            yield return WaitForSpeakerToFinish(sender);
-            yield return new WaitForSeconds(interTurnDelaySeconds);
-
-            NPCGroup group = FindGroup(sender);
-            if (group == null || !IsRoundRunning)
-            {
-                _structuredTransitionRoutine = null;
-                yield break;
-            }
-
-            ConvaiGroupNPCController nextSpeaker = group.GroupNPC1 == sender
-                ? group.GroupNPC2
-                : group.GroupNPC1;
-            group.CurrentSpeaker = nextSpeaker;
-            int nextTurnIndex = _completedStructuredTurns;
-            ShowStructuredTurnStatus(nextTurnIndex + 1, nextSpeaker);
-            yield return SendStructuredTurnPrompt(nextSpeaker, nextTurnIndex, previousResponse);
-            _structuredTransitionRoutine = null;
-        }
-
-        private IEnumerator FinishStructuredDebateAfterSpeaker(ConvaiGroupNPCController sender)
-        {
-            yield return WaitForSpeakerToFinish(sender);
-
-            IsRoundRunning = false;
-            HasRoundEnded = true;
-            RestoreRelayInterceptor();
-
-            if (conversationManager != null && firstSpeaker != null)
-            {
-                conversationManager.EndConversation(firstSpeaker);
-            }
-
-            ShowRefereeCaption(FormatDebateText(refereeClosingLine));
-            PlayRefereeClip(refereeClosingClip);
-            yield return new WaitForSeconds(GetCaptionDelay(closingCaptionSeconds, refereeClosingClip));
-            HideRefereeCaption();
-            _structuredTransitionRoutine = null;
-            RaiseRoundCompleted();
         }
 
         private void RaiseRoundCompleted()
@@ -407,133 +220,6 @@ namespace Game.Debate
             RoundCompleted?.Invoke();
         }
 
-        private IEnumerator WaitForSpeakerToFinish(ConvaiGroupNPCController speaker)
-        {
-            if (speaker == null || speaker.ConvaiNPC == null)
-            {
-                yield break;
-            }
-
-            AudioSource source = speaker.GetComponent<AudioSource>();
-            float graceRemaining = speakerAudioStartGraceSeconds;
-            while (graceRemaining > 0f && !IsSpeakerPlaying(speaker, source))
-            {
-                graceRemaining -= Time.deltaTime;
-                yield return null;
-            }
-
-            while (IsSpeakerPlaying(speaker, source))
-            {
-                yield return null;
-            }
-        }
-
-        private static bool IsSpeakerPlaying(ConvaiGroupNPCController speaker, AudioSource source)
-        {
-            return (speaker.ConvaiNPC != null && speaker.ConvaiNPC.IsCharacterTalking) ||
-                   (source != null && source.isPlaying);
-        }
-
-        private IEnumerator SendStructuredTurnPrompt(
-            ConvaiGroupNPCController speaker,
-            int turnIndex,
-            string previousResponse)
-        {
-            yield return new WaitForSeconds(firstSpeakerDelaySeconds);
-            if (!IsRoundRunning || speaker == null)
-            {
-                yield break;
-            }
-
-            string stance = speaker == firstSpeaker ? firstSpeakerStance : secondSpeakerStance;
-            string strategy = StructuredNpcDebatePlan.GetStrategyForTurn(turnIndex);
-            string prompt = StructuredNpcDebatePlan.BuildTurnPrompt(
-                debateTopic,
-                speaker.CharacterName,
-                stance,
-                strategy,
-                turnIndex + 1,
-                previousResponse);
-            speaker.SendTextDataNPC2NPC(prompt);
-        }
-
-        private NPCGroup FindGroup(ConvaiGroupNPCController npc)
-        {
-            if (conversationManager == null || npc == null)
-            {
-                return null;
-            }
-
-            foreach (NPCGroup group in conversationManager.npcGroups)
-            {
-                if (group != null && group.BelongToGroup(npc))
-                {
-                    return group;
-                }
-            }
-
-            return null;
-        }
-
-        private void ShowStructuredTurnStatus(int turnNumber, ConvaiGroupNPCController speaker)
-        {
-            string strategy = StructuredNpcDebatePlan.GetStrategyForTurn(turnNumber - 1);
-            string speakerName = speaker != null ? speaker.CharacterName : "NPC";
-            ShowRefereeCaption(
-                $"Turn {turnNumber} / {StructuredNpcDebatePlan.TurnCount} | {speakerName}\n" +
-                $"Strategy: {strategy}");
-        }
-
-        private void ConfigureRoundLipSync()
-        {
-            if (!useTutorialLipSyncDuringRound || conversationManager == null)
-            {
-                return;
-            }
-
-            foreach (NPCGroup group in conversationManager.npcGroups)
-            {
-                if (group == null)
-                {
-                    continue;
-                }
-
-                ConfigureRoundLipSync(group.GroupNPC1);
-                ConfigureRoundLipSync(group.GroupNPC2);
-            }
-        }
-
-        private static void ConfigureRoundLipSync(ConvaiGroupNPCController groupNpc)
-        {
-            if (groupNpc == null || groupNpc.ConvaiNPC == null)
-            {
-                return;
-            }
-
-            ConvaiLipSync convaiLipSync = groupNpc.GetComponent<ConvaiLipSync>();
-            if (convaiLipSync != null)
-            {
-                convaiLipSync.StopLipSync();
-                convaiLipSync.enabled = false;
-            }
-
-            foreach (ConvaiLipSyncApplicationBase lipSyncApplication in
-                     groupNpc.GetComponents<ConvaiLipSyncApplicationBase>())
-            {
-                lipSyncApplication.ClearQueue();
-                lipSyncApplication.enabled = false;
-            }
-
-            AudioSource source = groupNpc.GetComponent<AudioSource>();
-            AudioDrivenNpcLipSync tutorialLipSync = groupNpc.GetComponent<AudioDrivenNpcLipSync>();
-            if (tutorialLipSync == null)
-            {
-                tutorialLipSync = groupNpc.gameObject.AddComponent<AudioDrivenNpcLipSync>();
-            }
-
-            tutorialLipSync.Configure(source);
-            tutorialLipSync.enabled = true;
-        }
 
         private IEnumerator ConfigureSpeechBubbleBackgrounds()
         {

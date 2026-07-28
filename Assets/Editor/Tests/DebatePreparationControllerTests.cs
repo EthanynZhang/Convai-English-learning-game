@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using Game.Debate;
@@ -71,6 +72,47 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void OralSaveReadinessSeparatesLocalCaptureFromResearchPersistence()
+        {
+            MethodInfo readiness = typeof(PlayerOralPracticeController).GetMethod(
+                "HasValidSavedAttempt", BindingFlags.Public | BindingFlags.Static);
+            Assert.IsNotNull(readiness);
+
+            Assert.IsTrue((bool)readiness.Invoke(null, new object[]
+                { true, "A confirmed argument.", 3200, false, false, false, false }));
+            Assert.IsFalse((bool)readiness.Invoke(null, new object[]
+                { true, "A confirmed argument.", 3200, true, false, false, false }));
+            Assert.IsTrue((bool)readiness.Invoke(null, new object[]
+                { true, "A confirmed argument.", 3200, true, true, true, true }));
+            Assert.IsFalse((bool)readiness.Invoke(null, new object[]
+                { true, "", 3200, false, false, false, false }));
+            Assert.IsFalse((bool)readiness.Invoke(null, new object[]
+                { true, "A confirmed argument.", 0, false, false, false, false }));
+        }
+
+        [Test]
+        public void BaselineCanFinishEarlyOnlyAfterASavedAttemptIsIdle()
+        {
+            MethodInfo canFinish = typeof(PlayerOralPracticeController).GetMethod(
+                "CanFinishEarly", BindingFlags.Public | BindingFlags.Static);
+            Assert.IsNotNull(canFinish);
+            Assert.IsFalse((bool)canFinish.Invoke(null, new object[] { false, false, false }));
+            Assert.IsFalse((bool)canFinish.Invoke(null, new object[] { true, true, false }));
+            Assert.IsFalse((bool)canFinish.Invoke(null, new object[] { true, false, true }));
+            Assert.IsTrue((bool)canFinish.Invoke(null, new object[] { true, false, false }));
+        }
+
+        [Test]
+        public void TimeoutWithoutAValidAttemptKeepsBaselineRecordingAvailable()
+        {
+            MethodInfo remainOpen = typeof(PlayerOralPracticeController).GetMethod(
+                "ShouldRemainOpenAtTimeout", BindingFlags.Public | BindingFlags.Static);
+            Assert.IsNotNull(remainOpen);
+            Assert.IsTrue((bool)remainOpen.Invoke(null, new object[] { false }));
+            Assert.IsFalse((bool)remainOpen.Invoke(null, new object[] { true }));
+        }
+
+        [Test]
         public void OralPracticeUsesACompactTopLeftPanelWithoutArgumentTranscriptArea()
         {
             GameObject controllerObject = new("Oral Practice Controller Test");
@@ -98,12 +140,19 @@ namespace Game.Tests.EditMode
                 Assert.AreEqual(new Vector2(0f, 1f), panel.anchorMax);
                 Assert.AreEqual(new Vector2(0f, 1f), panel.pivot);
                 Assert.LessOrEqual(panel.sizeDelta.x, 700f);
-                Assert.LessOrEqual(panel.sizeDelta.y, 420f);
+                Assert.LessOrEqual(panel.sizeDelta.y, 500f);
+                Transform topicPanel = panel.Find("Debate Topic Panel");
+                Assert.IsNotNull(topicPanel);
+                Assert.IsNotNull(topicPanel.GetComponent<Image>());
+                TMP_Text topicText = topicPanel.GetComponentInChildren<TMP_Text>(true);
+                Assert.IsNotNull(topicText);
+                StringAssert.Contains(ResearchSceneContract.PracticeTopic, topicText.text);
+                Assert.Greater(topicText.color.b, topicText.color.r);
                 Assert.IsFalse(panel.GetComponentsInChildren<TMP_Text>(true)
                     .Any(text => string.Equals(text.text, "Your argument", StringComparison.Ordinal)));
                 Assert.IsNull(panel.Find("Transcript Scroll"));
                 Assert.AreEqual(
-                    5,
+                    6,
                     panel.GetComponentsInChildren<TMP_Text>(true).Length,
                     "The compact panel should add only the completion button label, not a live transcript area.");
                 Assert.IsNotNull(panel.GetComponentsInChildren<Button>(true)
@@ -118,6 +167,36 @@ namespace Game.Tests.EditMode
 
                 UnityEngine.Object.DestroyImmediate(controllerObject);
             }
+        }
+
+        [Test]
+        public void Scene03BaselineRemainsResearchDataAndScene04StartsWithoutIt()
+        {
+            string scene03 = File.ReadAllText(
+                "Assets/Game/Scripts/PlayerOralPracticeController.cs");
+            string scene04 = File.ReadAllText(
+                "Assets/Game/Scripts/ThreeStageDebatePracticeController.cs");
+            string workbench = File.ReadAllText(
+                "Assets/Game/Scripts/MicroCreeiPracticeController.cs");
+
+            foreach (string forbidden in new[]
+                     {
+                         "BaselineResponseSnapshot",
+                         "BaselineResponseContext",
+                         "baseline_transcript_imported",
+                         "scene03_baseline_imported"
+                     })
+            {
+                StringAssert.DoesNotContain(forbidden, scene03);
+                StringAssert.DoesNotContain(forbidden, scene04);
+                StringAssert.DoesNotContain(forbidden, workbench);
+            }
+
+            MicroCreeiPracticeSession session = new(600f);
+            session.Begin();
+            foreach (CreeiComponent component in Enum.GetValues(typeof(CreeiComponent)))
+                Assert.IsEmpty(session.CurrentDraft.GetText(component),
+                    $"Scene 04 must not prefill {component} from the Scene 03 baseline.");
         }
 
         [Test]
@@ -205,6 +284,21 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void OpponentOpeningTimeoutInterruptsAnyUnfinishedRequestOrSpeech()
+        {
+            MethodInfo decision = typeof(DebateRoundManager).GetMethod(
+                "ShouldInterruptTimedOutOpponentOpening",
+                BindingFlags.Public | BindingFlags.Static);
+            Assert.IsNotNull(
+                decision,
+                "The round manager must explicitly decide whether timed-out opponent audio is interrupted.");
+
+            Assert.IsTrue((bool)decision.Invoke(null, new object[] { false, 45f, 45f }));
+            Assert.IsFalse((bool)decision.Invoke(null, new object[] { true, 45f, 45f }));
+            Assert.IsFalse((bool)decision.Invoke(null, new object[] { false, 44.9f, 45f }));
+        }
+
+        [Test]
         public void OralTranscriptionStartNotifiesTheRoundTimerGate()
         {
             GameObject managerObject = new("Round Manager Test");
@@ -240,6 +334,35 @@ namespace Game.Tests.EditMode
 
                 UnityEngine.Object.DestroyImmediate(managerObject);
                 UnityEngine.Object.DestroyImmediate(oralObject);
+            }
+        }
+
+        [Test]
+        public void PreparationControllerDoesNotCancelOralPracticeTranscriptionAfterPreparationEnds()
+        {
+            GameObject controllerObject = new("Shared Transcriber Test");
+            try
+            {
+                XfyunRealtimeTranscriber transcriber =
+                    controllerObject.AddComponent<XfyunRealtimeTranscriber>();
+                DebatePreparationController controller =
+                    controllerObject.AddComponent<DebatePreparationController>();
+                SetPrivateField(controller, "realtimeTranscriber", transcriber);
+
+                Assert.IsFalse(controller.IsPreparing);
+                InvokePrivate(controller, "HandleTranscriptionStarted");
+
+                FieldInfo cancelRequested = typeof(XfyunRealtimeTranscriber).GetField(
+                    "_cancelRequested",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.IsNotNull(cancelRequested);
+                Assert.IsFalse(
+                    (bool)cancelRequested.GetValue(transcriber),
+                    "The preparation controller must ignore a later oral-practice session that reuses its transcriber.");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(controllerObject);
             }
         }
 

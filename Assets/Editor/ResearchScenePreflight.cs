@@ -57,10 +57,9 @@ namespace Game.EditorTools
                 ScenePath = "Assets/Game/Scenes/01Level_NPCVsNPCDebate.unity",
                 Required = new[]
                 {
-                    "NpcDebateLearningPhaseController",
-                    "NpcDebateRoundManager"
+                    "NpcDebateLearningPhaseController"
                 },
-                Forbidden = Array.Empty<string>()
+                Forbidden = new[] { "NpcDebateRoundManager" }
             },
             new()
             {

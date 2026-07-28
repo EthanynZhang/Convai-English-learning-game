@@ -1,4 +1,5 @@
 using Game.Debate;
+using Convai.Scripts.Runtime.Core;
 using NUnit.Framework;
 using System;
 using System.IO;
@@ -14,6 +15,31 @@ namespace Game.Tests.EditMode
     public sealed class ThreeStageDebatePracticeTests
     {
         [Test]
+        public void StoppingAnIdleUninitializedCoachDuringSceneJumpDoesNotCallConvai()
+        {
+            GameObject host = new("Scene 04 Controller Test");
+            GameObject coach = new("Uninitialized Coach Test");
+            try
+            {
+                ThreeStageDebatePracticeController controller =
+                    host.AddComponent<ThreeStageDebatePracticeController>();
+                ConvaiNPC npc = coach.AddComponent<ConvaiNPC>();
+                typeof(ThreeStageDebatePracticeController).GetField(
+                        "coachNPC", BindingFlags.Instance | BindingFlags.NonPublic)
+                    ?.SetValue(controller, npc);
+                MethodInfo stop = typeof(ThreeStageDebatePracticeController).GetMethod(
+                    "StopCoachSpeech", BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.IsNotNull(stop);
+                Assert.DoesNotThrow(() => stop.Invoke(controller, null));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(host);
+                UnityEngine.Object.DestroyImmediate(coach);
+            }
+        }
+
+        [Test]
         public void FlowContainsOnlyTheThreeApprovedPracticeStages()
         {
             CollectionAssert.AreEqual(
@@ -24,6 +50,69 @@ namespace Game.Tests.EditMode
                     DebatePracticeStage.RevisionSpeech
                 },
                 ThreeStageDebatePracticeRules.StageSequence);
+        }
+
+        [Test]
+        public void EveryPracticeHasOneExactSpokenIntroduction()
+        {
+            MethodInfo introduction = typeof(ThreeStageDebatePracticeRules).GetMethod(
+                "GetSpokenIntroduction", BindingFlags.Public | BindingFlags.Static);
+            Assert.IsNotNull(introduction);
+            Assert.AreEqual(
+                "In Practice One, build a five-part CREEI argument, review Coach support according to your assigned condition, and revise your argument.",
+                introduction.Invoke(null, new object[] { DebatePracticeStage.MicroPractice }));
+            Assert.AreEqual(
+                "In Practice Two, deliver a complete argument for at least ninety seconds, then review Coach feedback.",
+                introduction.Invoke(null, new object[] { DebatePracticeStage.FullSpeechWithFeedback }));
+            Assert.AreEqual(
+                "In Practice Three, deliver a revised argument for at least ninety seconds while Anna stays silent for the final assessment.",
+                introduction.Invoke(null, new object[] { DebatePracticeStage.RevisionSpeech }));
+        }
+
+        [Test]
+        public void StageIntroductionBlocksRecordingAndStageTimingUntilAnnaFinishes()
+        {
+            string controllerSource = File.ReadAllText(
+                "Assets/Game/Scripts/ThreeStageDebatePracticeController.cs");
+
+            Assert.IsTrue(Enum.IsDefined(typeof(DebatePracticePhase), "StageIntroduction"));
+            StringAssert.Contains("BeginStageIntroduction", controllerSource);
+            StringAssert.Contains("CompleteStageIntroduction", controllerSource);
+            StringAssert.Contains("practice_introduction_started", controllerSource);
+            StringAssert.Contains("practice_introduction_completed", controllerSource);
+            StringAssert.Contains("practice_introduction_failed", controllerSource);
+            StringAssert.Contains("Phase = DebatePracticePhase.StageIntroduction", controllerSource);
+        }
+
+        [Test]
+        public void FixedStageIntroductionUsesOfflineWindowsSpeechInsteadOfConvaiGeneration()
+        {
+            string controllerSource = File.ReadAllText(
+                "Assets/Game/Scripts/ThreeStageDebatePracticeController.cs");
+
+            StringAssert.Contains("StartFixedStageIntroductionSpeech(introduction)", controllerSource);
+            StringAssert.Contains("System.Speech.Synthesis.SpeechSynthesizer", controllerSource);
+            StringAssert.DoesNotContain("StartCoachSpeech(introduction)", controllerSource);
+        }
+
+        [Test]
+        public void ProjectKeepsAsyncCoachAudioRunningWhenTheGameWindowLosesFocus()
+        {
+            string projectSettings = File.ReadAllText(
+                "ProjectSettings/ProjectSettings.asset");
+
+            StringAssert.Contains("runInBackground: 1", projectSettings);
+        }
+
+        [Test]
+        public void StageIntroductionHardTimeoutPreventsAStuckCoachAudioQueue()
+        {
+            MethodInfo timedOut = typeof(ThreeStageDebatePracticeRules).GetMethod(
+                "HasStageIntroductionTimedOut", BindingFlags.Public | BindingFlags.Static);
+            Assert.IsNotNull(timedOut);
+            Assert.IsFalse((bool)timedOut.Invoke(null, new object[] { 9f, 10f }));
+            Assert.IsTrue((bool)timedOut.Invoke(null, new object[] { 10f, 10f }));
+            Assert.IsTrue((bool)timedOut.Invoke(null, new object[] { 11f, 10f }));
         }
 
         [Test]
@@ -122,7 +211,7 @@ namespace Game.Tests.EditMode
             Assert.IsNull(ThreeStageDebatePracticeRules.Next(DebatePracticeStage.RevisionSpeech));
         }
 
-        [TestCase(DebatePracticeStage.MicroPractice, "Challenge & Revision Lab", 1, 600f)]
+        [TestCase(DebatePracticeStage.MicroPractice, "CREEI Workbench", 1, 600f)]
         [TestCase(DebatePracticeStage.FullSpeechWithFeedback, "Full Speech + Coach Feedback", 2, 180f)]
         [TestCase(DebatePracticeStage.RevisionSpeech, "Revision Speech", 3, 180f)]
         public void StagePresentationIsStable(
@@ -208,12 +297,64 @@ namespace Game.Tests.EditMode
             StringAssert.Contains(controllerGuid, scene);
             StringAssert.Contains(viewGuid, scene);
             StringAssert.DoesNotContain("coachNPC: {fileID: 0}", scene);
-            StringAssert.DoesNotContain("opponentNPC: {fileID: 0}", scene);
+            StringAssert.Contains("opponentNPC: {fileID: 0}", scene);
             StringAssert.DoesNotContain("realtimeTranscriber: {fileID: 0}", scene);
             StringAssert.DoesNotContain("studyView: {fileID: 0}", scene);
-            StringAssert.Contains("coachFixedWorldPosition: {x: 1.1, y: 0, z: 2.33}", scene);
+            StringAssert.Contains("coachFixedWorldPosition: {x: 0.8, y: 0, z: 2.33}", scene);
             StringAssert.Contains("opponentFixedWorldPosition: {x: -0.25, y: 0, z: 2.5}", scene);
-            StringAssert.Contains("speakOpponentChallenges: 1", scene);
+            StringAssert.Contains("speakOpponentChallenges: 0", scene);
+        }
+
+        [Test]
+        public void MicroCreeiCardStateUsesPlainAsciiLabelWithoutMarker()
+        {
+            GameObject canvasObject = new("Canvas", typeof(Canvas));
+            GameObject viewObject = new("View");
+            try
+            {
+                MicroCreeiWorkbenchView view =
+                    viewObject.AddComponent<MicroCreeiWorkbenchView>();
+                view.Build(canvasObject.GetComponent<Canvas>());
+                view.SetCardState(CreeiComponent.Claim, "Active");
+
+                FieldInfo field = typeof(MicroCreeiWorkbenchView).GetField(
+                    "_cardStates", BindingFlags.NonPublic | BindingFlags.Instance);
+                var states = (System.Collections.Generic.Dictionary<CreeiComponent, TMP_Text>)
+                    field.GetValue(view);
+
+                Assert.AreEqual("Active", states[CreeiComponent.Claim].text);
+                StringAssert.DoesNotContain("◆", states[CreeiComponent.Claim].text);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(viewObject);
+                UnityEngine.Object.DestroyImmediate(canvasObject);
+            }
+        }
+
+        [Test]
+        public void PurposeSentenceValidatorIgnoresAbbreviationsAndDecimals()
+        {
+            const string feedback =
+                "Your explanation needs a clearer link to the claim. " +
+                "For example, use a brief class poll, e.g. a local learner survey. " +
+                "Explain what a 2.5-minute speaking task reveals about active language use. " +
+                "Then connect that evidence directly to why interaction improves speaking.";
+
+            Assert.IsTrue(DebateCoachFeedbackGenerator.IsPurposeFeedbackText(
+                CoachFeedbackPurpose.TargetedAdvice, feedback));
+        }
+
+        [Test]
+        public void Scene04PurposeRequestSharesTheTwoCallBudgetWithContractRepair()
+        {
+            string source = File.ReadAllText(
+                "Assets/Game/Scripts/DebateCoachFeedbackGenerator.cs");
+
+            StringAssert.Contains(
+                "int maxContractAttempts = safeRequest.Purpose.HasValue ? 1 : 2", source);
+            StringAssert.Contains("BuildPurposeContractRepairInstruction", source);
+            StringAssert.Contains("contractAttempt < maxContractAttempts", source);
         }
 
         [Test]
@@ -310,7 +451,7 @@ namespace Game.Tests.EditMode
             {
                 foreach (ResearchSessionManager existing in
                          UnityEngine.Object.FindObjectsByType<ResearchSessionManager>(
-                             FindObjectsInactive.Include, FindObjectsSortMode.None))
+                             FindObjectsInactive.Include))
                     UnityEngine.Object.DestroyImmediate(existing.gameObject);
 
                 ThreeStageDebatePracticeView view =
@@ -745,12 +886,12 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void OnlyPracticeOneActivatesTheOpponent()
+        public void Scene04NeverActivatesAnOpponent()
         {
             MethodInfo method = typeof(ThreeStageDebatePracticeRules).GetMethod(
                 "UsesOpponent", BindingFlags.Public | BindingFlags.Static);
             Assert.IsNotNull(method);
-            Assert.IsTrue((bool)method.Invoke(null,
+            Assert.IsFalse((bool)method.Invoke(null,
                 new object[] { DebatePracticeStage.MicroPractice }));
             Assert.IsFalse((bool)method.Invoke(null,
                 new object[] { DebatePracticeStage.FullSpeechWithFeedback }));
@@ -817,7 +958,7 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void FeedbackHistoryUsesACompactUpperRightPanelOnWideScreens()
+        public void FeedbackHistoryNearlyMatchesTheMainPanelWidthOnWideScreens()
         {
             GameObject canvasObject = new("Canvas", typeof(Canvas));
             GameObject viewObject = new("View");
@@ -839,7 +980,8 @@ namespace Game.Tests.EditMode
                 Assert.AreEqual(1f, rect.anchorMax.y);
                 Assert.AreEqual(1f, rect.pivot.x);
                 Assert.AreEqual(1f, rect.pivot.y);
-                Assert.AreEqual(360f, rect.sizeDelta.x, 0.1f);
+                Assert.AreEqual(596f, rect.sizeDelta.x, 0.1f);
+                Assert.GreaterOrEqual(rect.sizeDelta.x, view.RootRect.sizeDelta.x * 0.9f);
                 Assert.GreaterOrEqual(rect.sizeDelta.y, 600f);
                 Assert.Less(rect.anchoredPosition.y, 0f);
             }
@@ -898,7 +1040,7 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void AiLedFeedbackViewHasNoFocusOrActionButtons()
+        public void AiLedFeedbackViewProvidesOnlyAContinueToRevisionAction()
         {
             GameObject canvasObject = new("Canvas", typeof(Canvas));
             GameObject viewObject = new("View");
@@ -907,19 +1049,26 @@ namespace Game.Tests.EditMode
                 ThreeStageDebatePracticeView view =
                     viewObject.AddComponent<ThreeStageDebatePracticeView>();
                 view.Build(canvasObject.GetComponent<Canvas>());
-                MethodInfo method = typeof(ThreeStageDebatePracticeView).GetMethod(
-                    "ShowAutomatedCoachFeedback", BindingFlags.Public | BindingFlags.Instance);
-                Assert.IsNotNull(method);
-
-                method.Invoke(view, new object[] { "Anna's feedback", "Use a concrete example." });
+                CoachLearnerAction submittedAction = CoachLearnerAction.None;
+                view.LearnerActionRequested += (action, _) => submittedAction = action;
+                view.ShowConditionFeedback(
+                    CoachOrchestrationMode.AiLed,
+                    "Use a concrete example.");
 
                 Transform coach = view.RootRect.Find("Coach");
                 Assert.IsNotNull(coach);
                 Transform focus = coach.Find("Focus Selector");
                 Assert.IsNotNull(focus);
                 Assert.IsFalse(focus.gameObject.activeSelf);
-                Assert.IsFalse(coach.GetComponentsInChildren<Button>(true)
-                    .Any(button => button.gameObject.activeInHierarchy));
+                Button continueButton = coach.GetComponentsInChildren<Button>(true)
+                    .Single(button => button.gameObject.activeInHierarchy);
+                Assert.AreEqual(
+                    "Continue to Revision",
+                    continueButton.GetComponentInChildren<TMP_Text>(true).text);
+
+                continueButton.onClick.Invoke();
+
+                Assert.AreEqual(CoachLearnerAction.ApplyNextCycle, submittedAction);
             }
             finally
             {
@@ -1118,7 +1267,7 @@ namespace Game.Tests.EditMode
             {
                 foreach (ResearchSessionManager existing in
                          UnityEngine.Object.FindObjectsByType<ResearchSessionManager>(
-                             FindObjectsInactive.Include, FindObjectsSortMode.None))
+                             FindObjectsInactive.Include))
                     UnityEngine.Object.DestroyImmediate(existing.gameObject);
 
                 managerObject = new GameObject("Research Session Manager");
@@ -1191,7 +1340,8 @@ namespace Game.Tests.EditMode
                     .Select(text => text.text));
                 StringAssert.Contains(ThreeStageDebatePracticeRules.MockDebateTopic, copy);
                 StringAssert.Contains("Coach (Anna)", copy);
-                StringAssert.Contains("Opponent Leo", copy);
+                StringAssert.DoesNotContain("Opponent Leo", copy);
+                StringAssert.Contains("one-to-one coaching workbench with Anna", copy);
                 StringAssert.Contains("Practice 1", copy);
                 StringAssert.Contains("Practice 2", copy);
                 StringAssert.Contains("Practice 3", copy);
@@ -1257,7 +1407,9 @@ namespace Game.Tests.EditMode
                 Assert.IsTrue(history.gameObject.activeSelf);
                 Assert.IsFalse(historyToggle.gameObject.activeSelf);
                 RectTransform historyRect = history.GetComponent<RectTransform>();
-                Assert.AreEqual(360f, historyRect.sizeDelta.x, 0.1f);
+                Assert.AreEqual(596f, historyRect.sizeDelta.x, 0.1f);
+                Assert.GreaterOrEqual(historyRect.sizeDelta.x,
+                    view.RootRect.sizeDelta.x * 0.9f);
                 Assert.LessOrEqual(
                     agendaRect.anchoredPosition.x + agendaRect.sizeDelta.x,
                     1600f - historyRect.sizeDelta.x - 16f);
@@ -1419,6 +1571,52 @@ namespace Game.Tests.EditMode
             StringAssert.Contains("ShowCoachAgenda", source);
             StringAssert.Contains("UpdateCoachAgenda", source);
             StringAssert.Contains("HideCoachAgenda", source);
+        }
+
+        [Test]
+        public void PracticeRecordingShowsConnectingStatusBeforeStartingRealtimeSession()
+        {
+            string source = File.ReadAllText(
+                "Assets/Game/Scripts/ThreeStageDebatePracticeController.cs");
+            int methodStart = source.IndexOf("private void StartRecording()",
+                StringComparison.Ordinal);
+            int methodEnd = source.IndexOf("private void StopRecording()",
+                methodStart, StringComparison.Ordinal);
+            Assert.GreaterOrEqual(methodStart, 0);
+            Assert.Greater(methodEnd, methodStart);
+
+            string method = source.Substring(methodStart, methodEnd - methodStart);
+            int connectingStatus = method.IndexOf(
+                "ShowCurrentPractice(\"Connecting to English realtime transcription...\")",
+                StringComparison.Ordinal);
+            int startSession = method.IndexOf(
+                "realtimeTranscriber.StartSession(device)", StringComparison.Ordinal);
+
+            Assert.GreaterOrEqual(connectingStatus, 0);
+            Assert.GreaterOrEqual(startSession, 0);
+            Assert.Less(connectingStatus, startSession,
+                "A synchronous transcription failure must be allowed to replace the connecting status.");
+        }
+
+        [Test]
+        public void Scene04ControllerDefaultsToTheProjectRelayEndpoint()
+        {
+            GameObject controllerObject = new("Scene 04 Controller");
+            try
+            {
+                ThreeStageDebatePracticeController controller =
+                    controllerObject.AddComponent<ThreeStageDebatePracticeController>();
+                FieldInfo baseUrlField = typeof(ThreeStageDebatePracticeController).GetField(
+                    "openAIBaseUrl", BindingFlags.NonPublic | BindingFlags.Instance);
+
+                Assert.IsNotNull(baseUrlField);
+                Assert.AreEqual("https://api.meding.site/v1/chat/completions",
+                    baseUrlField.GetValue(controller));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(controllerObject);
+            }
         }
 
         private static string[] VisibleCoachButtonLabels(ThreeStageDebatePracticeView view)

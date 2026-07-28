@@ -120,7 +120,7 @@ namespace Game.Debate
         public const float CreeiStructureSeconds = 30f;
         public const float OneSentencePracticeSeconds = 240f;
         public const float StrategyReadingSeconds = 90f;
-        public const float StrategyDialogueDemoSeconds = 40f;
+        public const float StrategyDialogueDemoSeconds = 60f;
         public const float StrategyDemoSeconds = StrategyDialogueDemoSeconds * 3f;
         public const float StrategyMiniTrySeconds = 90f;
         public const float MicroChoiceSeconds = 45f;
@@ -221,9 +221,9 @@ namespace Game.Debate
 
         public static string StrategyReadingText =>
             "Three persuasive strategies can strengthen an argument.\n\n" +
-            "Logos uses logic, reasons, evidence, cause and effect, and practical tradeoffs.\n" +
-            "Ethos uses credibility, fairness, responsibility, honesty, and a balanced position.\n" +
-            "Pathos uses emotion, empathy, pressure, hopes, fears, and human consequences.";
+            "Logos means logic: use clear reasons, evidence, and cause-and-effect links.\n" +
+            "Ethos means credibility: sound fair, informed, and responsible so the audience can trust you.\n" +
+            "Pathos means emotion: help the audience feel why the issue matters without replacing evidence.";
 
         public static string StrategyMiniTryText =>
             "Use the topic: Speaking is more important for learning English.\n\n" +
@@ -247,26 +247,32 @@ namespace Game.Debate
 
         public static readonly DemoDialogueLine[] LogosDialogueLines =
         {
-            new("Anna", "Anna Reed", "Logos means using clear logic, reasons, and evidence.", "Logos"),
-            new("Mike", "Mike Carter", "Show me a Logos argument about reading and speaking.", "Logos"),
-            new("Anna", "Anna Reed", "Speaking requires learners to retrieve vocabulary, form sentences, and respond in real time. Repeated practice therefore makes communication faster and more automatic.", "Logos"),
-            new("Mike", "Mike Carter", "So the logic is active retrieval first, more fluent communication later.", "Logos")
+            new("Anna", "Anna Reed", "Speaking practice should receive more class time because learners need to retrieve words, build sentences, and react immediately.", "Logos"),
+            new("Mike", "Mike Carter", "But reading gives learners vocabulary and grammar. Why should speaking come first?", "Logos"),
+            new("Anna", "Anna Reed", "Reading supplies language, but speaking tests whether learners can use it under time pressure. Regular speaking turns passive knowledge into faster responses.", "Logos"),
+            new("Mike", "Mike Carter", "Do you have a concrete example?", "Logos"),
+            new("Anna", "Anna Reed", "A learner may understand the phrase I disagree in a book, yet hesitate in conversation. Weekly debates make that response quicker and more automatic.", "Logos"),
+            new("Mike", "Mike Carter", "That is Logos: the reasons, example, and cause-and-effect link support your claim.", "Logos")
         };
 
         public static readonly DemoDialogueLine[] EthosDialogueLines =
         {
-            new("Anna", "Anna Reed", "Ethos means sounding fair, responsible, and credible.", "Ethos"),
-            new("Mike", "Mike Carter", "How would Ethos support speaking in this debate?", "Ethos"),
-            new("Anna", "Anna Reed", "A responsible English program should give learners safe, regular chances to speak while still valuing reading as useful preparation.", "Ethos"),
-            new("Mike", "Mike Carter", "That sounds credible because it supports speaking without dismissing the value of reading.", "Ethos")
+            new("Anna", "Anna Reed", "Speaking should be central, but I would not remove reading. A responsible program uses reading to prepare learners and speaking to test real use.", "Ethos"),
+            new("Mike", "Mike Carter", "Why does admitting reading's value make your position stronger?", "Ethos"),
+            new("Anna", "Anna Reed", "It shows I have considered both sides instead of ignoring useful evidence. Teachers can trust a balanced plan more than an extreme promise.", "Ethos"),
+            new("Mike", "Mike Carter", "What would that balanced plan look like?", "Ethos"),
+            new("Anna", "Anna Reed", "Learners could read a short article, check reliable vocabulary, and then discuss it with clear speaking goals and supportive feedback.", "Ethos"),
+            new("Mike", "Mike Carter", "That is Ethos: fairness, informed judgment, and a realistic plan make you credible.", "Ethos")
         };
 
         public static readonly DemoDialogueLine[] PathosDialogueLines =
         {
-            new("Anna", "Anna Reed", "Pathos means using emotion and empathy in a controlled way.", "Pathos"),
-            new("Mike", "Mike Carter", "How can Pathos make the speaking argument stronger?", "Pathos"),
-            new("Anna", "Anna Reed", "Many learners know English on paper but feel silent and isolated in real conversations. Speaking practice helps them find their voice and connect with other people.", "Pathos"),
-            new("Mike", "Mike Carter", "That helps the audience care about the confidence and connection learners gain through speaking.", "Pathos")
+            new("Anna", "Anna Reed", "Imagine knowing the answer in English but staying silent because you are afraid of making one mistake.", "Pathos"),
+            new("Mike", "Mike Carter", "That feeling is real, but emotion alone does not prove speaking is more important.", "Pathos"),
+            new("Anna", "Anna Reed", "You are right, so I connect the feeling to the consequence: without safe speaking practice, learners may keep avoiding real conversations even when they know the grammar.", "Pathos"),
+            new("Mike", "Mike Carter", "Can you show the human impact more clearly?", "Pathos"),
+            new("Anna", "Anna Reed", "A student who finally asks a classmate for help or speaks in a job interview gains confidence, connection, and a chance to be heard.", "Pathos"),
+            new("Mike", "Mike Carter", "That is Pathos: the audience can feel the learner's fear and hope, while the argument still gives a clear consequence.", "Pathos")
         };
 
         public static readonly DebateLearningStageSpec[] StageSequence =
@@ -274,7 +280,7 @@ namespace Game.Debate
             new(
                 DebateLearningStageKey.WarmUp,
                 "Warm-up",
-                "The debate topic is: Reading and speaking, which is more important in learning English? In this tutorial, you will practise building the position that speaking is more important. You will study CREEI, watch fixed demonstrations, and compare Logos, Ethos, and Pathos before the NPC debate begins.",
+                "The debate topic is: Reading and speaking, which is more important in learning English? In this tutorial, you will practise building the position that speaking is more important. You will study CREEI, watch fixed demonstrations, and compare Logos, Ethos, and Pathos before your individual baseline practice.",
                 FramedWarmUpSeconds,
                 DebateLearningViewKind.Card),
             new(
@@ -334,22 +340,15 @@ namespace Game.Debate
             new(
                 DebateLearningStageKey.MicroChoice,
                 "Strategy Reflection",
-                "Before the NPC debate begins, think silently about one strategy you may want to notice next.\n\nLogos: clear reasoning.\nEthos: responsible and fair.\nPathos: human concern.\n\nNo choice is required here. Just keep one focus in mind.",
+                "Before your individual baseline practice, think silently about one strategy you may want to notice next.\n\nLogos: clear reasoning.\nEthos: responsible and fair.\nPathos: human concern.\n\nNo choice is required here. Just keep one focus in mind.",
                 MicroChoiceSeconds,
                 DebateLearningViewKind.Card),
             new(
                 DebateLearningStageKey.BufferTransition,
                 "Transition",
-                "You have finished the shared reading, watching, and micro practice. The NPC debate will begin next.",
+                "You have finished the shared reading, watching, and micro practice. Continue to your individual baseline speaking practice.",
                 BufferTransitionSeconds,
-                DebateLearningViewKind.Card),
-            new(
-                DebateLearningStageKey.StartDebate,
-                "Start Debate",
-                string.Empty,
-                0f,
-                DebateLearningViewKind.Card,
-                true)
+                DebateLearningViewKind.Card)
         };
 
         public static string GetRepeatExactlyPrompt(string transcript)

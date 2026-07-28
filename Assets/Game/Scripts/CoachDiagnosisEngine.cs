@@ -39,10 +39,18 @@ namespace Game.Debate
         public static string BuildPrompt(CoachDiagnosisRequest request)
         {
             request ??= new CoachDiagnosisRequest();
+            string currentArgument = BuildStructuredArgument(
+                "current_creei_argument", request.CurrentCreeiSnapshot,
+                request.PlayerUtteranceText);
+            string previousArgument = BuildStructuredArgument(
+                "previous_creei_argument", request.PreviousCreeiSnapshot,
+                request.PreviousConfirmedAttempt);
             return
                 "You analyze one completed debate turn from a CEFR B1-B2 English learner.\n" +
                 "Diagnose the turn using CREEI and Ethos/Pathos/Logos.\n" +
                 "Review all five CREEI components: Claim, Reason, Evidence, Explanation, and Impact.\n" +
+                "Return exactly one component_diagnoses item for each of the five components. " +
+                "Check connections: whether Evidence supports Reason and whether Explanation links Evidence to Reason and Claim.\n" +
                 "Return creei_missing_or_weak_components as every component that is absent, underdeveloped, or connected unclearly. " +
                 "Return creei_gap_summary as one concise English sentence describing the whole-argument structural gap without advice or a model answer.\n" +
                 "Return structured labels only. Do not generate learner-facing feedback or a model answer.\n" +
@@ -56,7 +64,7 @@ namespace Game.Debate
                 "Also return ranked_suggestions with at most three distinct valid issues, ordered by priority. " +
                 "Each suggestion needs an id, rank, issue code, focus, problem description, and improvement goal. " +
                 "Do not invent extra suggestions to fill the list.\n" +
-                "Do not infer or read the learner's experimental condition.\n\n" +
+                "Use only the learning content supplied below.\n\n" +
                 "stage: " + request.Stage + "\n" +
                 "topic_id: " + request.TopicId + "\n" +
                 "practice_cycle_id: " + request.PracticeCycleId + "\n" +
@@ -64,9 +72,9 @@ namespace Game.Debate
                 "topic: " + request.Topic + "\n" +
                 "learner_side: " + request.LearnerSide + "\n" +
                 "previous_confirmed_creei_stages:\n" + request.PreviousConfirmedStages + "\n" +
-                "previous_confirmed_attempt:\n" + request.PreviousConfirmedAttempt + "\n" +
+                previousArgument + "\n" +
                 "opponent_last_turn: " + request.OpponentUtteranceText + "\n" +
-                "learner_current_turn: " + request.PlayerUtteranceText + "\n" +
+                currentArgument + "\n" +
                 "selected_strategy: " + request.SelectedStrategy;
         }
 
@@ -95,11 +103,37 @@ namespace Game.Debate
                     ["creei_missing_or_weak_components"] = new JObject
                     {
                         ["type"] = "array",
-                        ["uniqueItems"] = true,
                         ["maxItems"] = 5,
                         ["items"] = EnumString("Claim", "Reason", "Evidence", "Explanation", "Impact")
                     },
                     ["creei_gap_summary"] = new JObject { ["type"] = "string" },
+                    ["component_diagnoses"] = new JObject
+                    {
+                        ["type"] = "array",
+                        ["minItems"] = 5,
+                        ["maxItems"] = 5,
+                        ["items"] = new JObject
+                        {
+                            ["type"] = "object",
+                            ["additionalProperties"] = false,
+                            ["properties"] = new JObject
+                            {
+                                ["component"] = EnumString(
+                                    "Claim", "Reason", "Evidence", "Explanation", "Impact"),
+                                ["criterion_met"] = new JObject { ["type"] = "boolean" },
+                                ["severity"] = new JObject
+                                    { ["type"] = "integer", ["minimum"] = 0, ["maximum"] = 3 },
+                                ["confidence"] = new JObject
+                                    { ["type"] = "number", ["minimum"] = 0, ["maximum"] = 1 },
+                                ["issue_code"] = new JObject { ["type"] = "string" },
+                                ["evidence_span"] = new JObject { ["type"] = "string" },
+                                ["recommended_next_action"] = new JObject { ["type"] = "string" }
+                            },
+                            ["required"] = new JArray(
+                                "component", "criterion_met", "severity", "confidence",
+                                "issue_code", "evidence_span", "recommended_next_action")
+                        }
+                    },
                     ["ranked_suggestions"] = new JObject
                     {
                         ["type"] = "array",
@@ -129,7 +163,7 @@ namespace Game.Debate
                     "reasoning_connection", "diagnosis_severity", "diagnosis_confidence",
                     "recommended_focus", "recommended_next_action", "revision_improvement_status",
                     "revision_improvement_summary", "creei_missing_or_weak_components",
-                    "creei_gap_summary", "ranked_suggestions")
+                    "creei_gap_summary", "component_diagnoses", "ranked_suggestions")
             };
         }
 
@@ -273,6 +307,8 @@ namespace Game.Debate
                 string gapSummary = ((string)json["creei_gap_summary"] ?? string.Empty).Trim();
                 if (string.IsNullOrWhiteSpace(gapSummary) && !string.IsNullOrWhiteSpace(weakComponent))
                     gapSummary = $"The {weakComponent} component needs development.";
+                CreeiComponentDiagnosis[] componentDiagnoses = ParseComponentDiagnoses(
+                    json["component_diagnoses"] as JArray);
                 return new CoachDiagnosisResult
                 {
                     Success = true,
@@ -291,6 +327,7 @@ namespace Game.Debate
                     RevisionImprovementSummary = (string)json["revision_improvement_summary"] ?? string.Empty,
                     CreeiMissingOrWeakComponents = missingOrWeak,
                     CreeiGapSummary = gapSummary,
+                    ComponentDiagnoses = componentDiagnoses,
                     RankedSuggestions = ranked,
                     RawJson = json.ToString(Formatting.None),
                     ModelVersion = "coach-diagnosis-v2"
@@ -315,6 +352,48 @@ namespace Game.Debate
         private static bool IsCreeiComponent(string value)
         {
             return value is "Claim" or "Reason" or "Evidence" or "Explanation" or "Impact";
+        }
+
+        private static string BuildStructuredArgument(
+            string label,
+            CreeiArgumentSnapshot snapshot,
+            string fallback)
+        {
+            if (snapshot == null)
+                return label + "_unstructured:\n" + (fallback ?? string.Empty);
+            return label + ":\n" +
+                   "claim: " + snapshot.Claim + "\n" +
+                   "reason: " + snapshot.Reason + "\n" +
+                   "evidence: " + snapshot.Evidence + "\n" +
+                   "explanation: " + snapshot.Explanation + "\n" +
+                   "impact: " + snapshot.Impact;
+        }
+
+        private static CreeiComponentDiagnosis[] ParseComponentDiagnoses(JArray array)
+        {
+            if (array == null) return Array.Empty<CreeiComponentDiagnosis>();
+            return array
+                .Select(token =>
+                {
+                    Enum.TryParse((string)token["component"], true,
+                        out CreeiComponent component);
+                    return new CreeiComponentDiagnosis
+                    {
+                        Component = component,
+                        CriterionMet = (bool?)token["criterion_met"] ?? false,
+                        Severity = Mathf.Clamp((int?)token["severity"] ?? 0, 0, 3),
+                        Confidence = Mathf.Clamp01((float?)token["confidence"] ?? 0f),
+                        IssueCode = (string)token["issue_code"] ?? string.Empty,
+                        EvidenceSpan = (string)token["evidence_span"] ?? string.Empty,
+                        RecommendedNextAction =
+                            (string)token["recommended_next_action"] ?? string.Empty
+                    };
+                })
+                .GroupBy(item => item.Component)
+                .Select(group => group.First())
+                .OrderBy(item => (int)item.Component)
+                .Take(5)
+                .ToArray();
         }
     }
 }

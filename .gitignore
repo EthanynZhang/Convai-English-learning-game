@@ -140,3 +140,8 @@ Build1.rar
 # Local service credentials should not be changed through commits.
 /[Aa]ssets/[Rr]esources/ConvaiAPIKey.asset
 /[Aa]ssets/[Rr]esources/ConvaiAPIKey.asset.meta
+
+# Generated locally for explicitly authorized internal Windows builds.
+# This asset contains live credentials and must never be committed.
+/[Aa]ssets/[Rr]esources/InternalTestApiCredentials.asset
+/[Aa]ssets/[Rr]esources/InternalTestApiCredentials.asset.meta

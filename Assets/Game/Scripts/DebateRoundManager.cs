@@ -195,6 +195,13 @@ namespace Game.Debate
                     }
 
                     audioManager.OnCharacterTalkingChanged -= talkingChanged;
+                    if (ShouldInterruptTimedOutOpponentOpening(
+                            speechFinished,
+                            elapsed,
+                            opponentOpeningTimeoutSeconds))
+                    {
+                        opponentNPC.InterruptCharacterSpeech();
+                    }
                 }
             }
 
@@ -300,6 +307,15 @@ namespace Game.Debate
             bool playerSpeechStarted)
         {
             return !waitForPlayerSpeech || playerSpeechStarted;
+        }
+
+        public static bool ShouldInterruptTimedOutOpponentOpening(
+            bool speechFinished,
+            float elapsedSeconds,
+            float timeoutSeconds)
+        {
+            return !speechFinished &&
+                   elapsedSeconds >= Mathf.Max(1f, timeoutSeconds);
         }
 
         public void NotifyPlayerSpeechStarted()

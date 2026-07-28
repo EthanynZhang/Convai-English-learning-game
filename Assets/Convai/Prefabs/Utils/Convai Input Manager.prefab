@@ -242,13 +242,5 @@ MonoBehaviour:
     m_Id: fdac321c-1b81-4446-8411-d18df0224253
     m_Processors: 
     m_Interactions: 
-    m_SingletonActionBindings:
-    - m_Name: 
-      m_Id: 6cbc32f2-70c5-489b-b8c5-f08ad4d66ffa
-      m_Path: <Keyboard>/f10
-      m_Interactions: 
-      m_Processors: 
-      m_Groups: 
-      m_Action: Settings Key
-      m_Flags: 0
+    m_SingletonActionBindings: []
     m_Flags: 0

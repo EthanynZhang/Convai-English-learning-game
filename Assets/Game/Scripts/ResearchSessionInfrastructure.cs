@@ -49,6 +49,13 @@ namespace Game.Debate
         public string EventType = string.Empty;
         public string Actor = string.Empty;
         public string Recipient = string.Empty;
+        public string EpistemicSchemaVersion = string.Empty;
+        public string EpistemicAction = string.Empty;
+        public string EpistemicActor = string.Empty;
+        public string EpistemicInitiator = string.Empty;
+        public string EpistemicDecisionOwner = string.Empty;
+        public string EpistemicTarget = string.Empty;
+        public string EpistemicOutcome = string.Empty;
         public string PayloadJson = string.Empty;
     }
 
@@ -91,12 +98,117 @@ namespace Game.Debate
         public const int SchemaVersion = 2;
         public const string StudyId = "BJET_Debate";
 
+        private static string _defaultRootDirectory;
+
         public static string GetDefaultRootDirectory()
         {
-            return Path.Combine(
+            if (!string.IsNullOrWhiteSpace(_defaultRootDirectory))
+                return _defaultRootDirectory;
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            string executableDirectory = Path.GetDirectoryName(Application.dataPath);
+            const bool preferPortableDirectory = true;
+#else
+            string executableDirectory = null;
+            const bool preferPortableDirectory = false;
+#endif
+            _defaultRootDirectory = ResolveDefaultRootDirectory(
+                executableDirectory,
                 Application.persistentDataPath,
+                preferPortableDirectory,
+                TryEnsureWritableDirectory);
+            return _defaultRootDirectory;
+        }
+
+        public static string BuildPortableRootDirectory(string executableDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(executableDirectory))
+                throw new ArgumentException("An executable directory is required.",
+                    nameof(executableDirectory));
+
+            return Path.Combine(
+                Path.GetFullPath(executableDirectory),
                 "ResearchData",
                 "schema_v2");
+        }
+
+        public static string ResolveDefaultRootDirectory(
+            string executableDirectory,
+            string persistentDataDirectory,
+            bool preferPortableDirectory,
+            Func<string, bool> ensureWritableDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(persistentDataDirectory))
+                throw new ArgumentException("A persistent data directory is required.",
+                    nameof(persistentDataDirectory));
+            if (ensureWritableDirectory == null)
+                throw new ArgumentNullException(nameof(ensureWritableDirectory));
+
+            string fallback = Path.Combine(
+                Path.GetFullPath(persistentDataDirectory),
+                "ResearchData",
+                "schema_v2");
+            if (!preferPortableDirectory || string.IsNullOrWhiteSpace(executableDirectory))
+                return fallback;
+
+            string portable = BuildPortableRootDirectory(executableDirectory);
+            try
+            {
+                if (ensureWritableDirectory(portable)) return portable;
+            }
+            catch
+            {
+                // Portable builds can be installed in protected Windows directories.
+            }
+
+            return fallback;
+        }
+
+        public static string BuildLegacyLogDirectory(string sessionRootDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(sessionRootDirectory))
+                throw new ArgumentException("A session root directory is required.",
+                    nameof(sessionRootDirectory));
+
+            string fullSessionRoot = Path.GetFullPath(sessionRootDirectory);
+            string researchDataDirectory = Path.GetDirectoryName(fullSessionRoot);
+            if (string.IsNullOrWhiteSpace(researchDataDirectory))
+                throw new InvalidOperationException("The research storage directory is invalid.");
+            return Path.Combine(researchDataDirectory, "legacy_logs");
+        }
+
+        public static string GetDefaultLegacyLogDirectory()
+        {
+            return BuildLegacyLogDirectory(GetDefaultRootDirectory());
+        }
+
+        private static bool TryEnsureWritableDirectory(string directory)
+        {
+            string probePath = null;
+            try
+            {
+                Directory.CreateDirectory(directory);
+                probePath = Path.Combine(directory,
+                    ".debatequick-write-test-" + Guid.NewGuid().ToString("N"));
+                File.WriteAllText(probePath, string.Empty);
+                File.Delete(probePath);
+                return true;
+            }
+            catch
+            {
+                if (!string.IsNullOrWhiteSpace(probePath) && File.Exists(probePath))
+                {
+                    try
+                    {
+                        File.Delete(probePath);
+                    }
+                    catch
+                    {
+                        // Best-effort cleanup; the caller will use the fallback directory.
+                    }
+                }
+                return false;
+            }
         }
 
         public static string BuildSessionDirectory(
@@ -583,6 +695,7 @@ namespace Game.Debate
                 EventType = eventType.Trim()
             };
             configure?.Invoke(record);
+            ResearchEpistemicActionAnnotator.Annotate(record);
             Sink.WriteEvent(record);
             return record;
         }

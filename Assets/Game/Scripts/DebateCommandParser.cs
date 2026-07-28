@@ -140,8 +140,16 @@ namespace Game.Debate
             }
 
             string playerPrefsKey = PlayerPrefs.GetString(ApiKeyPlayerPrefsKey, string.Empty).Trim();
-            return !string.IsNullOrWhiteSpace(playerPrefsKey)
-                ? playerPrefsKey
+            if (!string.IsNullOrWhiteSpace(playerPrefsKey))
+            {
+                return playerPrefsKey;
+            }
+
+            InternalTestApiCredentials embeddedCredentials =
+                InternalTestApiCredentials.Load();
+            return embeddedCredentials != null &&
+                   !string.IsNullOrWhiteSpace(embeddedCredentials.DebateApiKey)
+                ? embeddedCredentials.DebateApiKey
                 : ProjectRelayApiKey;
         }
 
@@ -165,8 +173,16 @@ namespace Game.Debate
             }
 
             string playerPrefsBaseUrl = PlayerPrefs.GetString(BaseUrlPlayerPrefsKey, string.Empty).Trim();
-            return !string.IsNullOrWhiteSpace(playerPrefsBaseUrl)
-                ? playerPrefsBaseUrl
+            if (!string.IsNullOrWhiteSpace(playerPrefsBaseUrl))
+            {
+                return playerPrefsBaseUrl;
+            }
+
+            InternalTestApiCredentials embeddedCredentials =
+                InternalTestApiCredentials.Load();
+            return embeddedCredentials != null &&
+                   !string.IsNullOrWhiteSpace(embeddedCredentials.DebateBaseUrl)
+                ? embeddedCredentials.DebateBaseUrl
                 : ProjectRelayEndpoint;
         }
 

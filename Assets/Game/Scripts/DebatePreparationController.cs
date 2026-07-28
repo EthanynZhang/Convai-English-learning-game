@@ -461,7 +461,6 @@ namespace Game.Debate
         {
             if (!IsPreparing)
             {
-                realtimeTranscriber?.CancelSession();
                 return;
             }
 
