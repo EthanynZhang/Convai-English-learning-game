@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Newtonsoft.Json;
@@ -79,9 +80,9 @@ namespace Game.Debate
                                              parsed != null &&
                                              parsed.Source == CoachFeedbackSource.OpenAI &&
                                              safeRequest.Purpose.HasValue &&
-                                             !IsPurposeFeedbackText(
+                                             !IsPurposeFeedbackResult(
                                                  safeRequest.Purpose.Value,
-                                                 parsed.FeedbackText);
+                                                 parsed);
                 if (purposeContractFailed && contractAttempt < maxContractAttempts)
                 {
                     contractRepairInstruction = BuildPurposeContractRepairInstruction(
@@ -102,7 +103,7 @@ namespace Game.Debate
             {
                 parsed.FeedbackLevel = safeRequest.FeedbackLevel;
                 if (safeRequest.Purpose.HasValue &&
-                    !IsPurposeFeedbackText(safeRequest.Purpose.Value, parsed.FeedbackText))
+                    !IsPurposeFeedbackResult(safeRequest.Purpose.Value, parsed))
                 {
                     parsed.Source = CoachFeedbackSource.Rules;
                     parsed.DebugInfo =
@@ -330,6 +331,8 @@ namespace Game.Debate
         public static bool IsPurposeFeedbackText(CoachFeedbackPurpose purpose, string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return false;
+            if (purpose == CoachFeedbackPurpose.CreeiModelAnswer)
+                return IsValidCreeiModelExampleSet(ParseLabelledCreeiModelExamples(text));
             int count = CountSentences(text);
             return purpose switch
             {
@@ -342,6 +345,54 @@ namespace Game.Debate
                 CoachFeedbackPurpose.AdditionalSuggestion => count is >= 2 and <= 4,
                 _ => false
             };
+        }
+
+        private static bool IsPurposeFeedbackResult(
+            CoachFeedbackPurpose purpose,
+            CoachFeedbackResult result) =>
+            result != null &&
+            (purpose == CoachFeedbackPurpose.CreeiModelAnswer
+                ? IsValidCreeiModelExampleSet(result.CreeiModelExamples)
+                : IsPurposeFeedbackText(purpose, result.FeedbackText));
+
+        public static bool IsValidCreeiModelExampleSet(CreeiModelExampleSet examples)
+        {
+            if (examples == null) return false;
+            foreach (CreeiComponent component in Enum.GetValues(typeof(CreeiComponent)))
+            {
+                string text = examples.GetText(component)?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(text) ||
+                    !text.Any(character =>
+                        character is >= 'A' and <= 'Z' or >= 'a' and <= 'z') ||
+                    !text.EndsWith(".", StringComparison.Ordinal) &&
+                    !text.EndsWith("!", StringComparison.Ordinal) &&
+                    !text.EndsWith("?", StringComparison.Ordinal) ||
+                    CountSentences(text) != 1 ||
+                    !IsConcreteExampleText(text) ||
+                    !string.Equals(text, Clean(text), StringComparison.Ordinal))
+                    return false;
+            }
+            return true;
+        }
+
+        public static string BuildCreeiModelHistoryText(CreeiModelExampleSet examples)
+        {
+            if (examples == null) return string.Empty;
+            return "Claim: " + examples.Claim.Trim() + "\n" +
+                   "Reason: " + examples.Reason.Trim() + "\n" +
+                   "Evidence: " + examples.Evidence.Trim() + "\n" +
+                   "Explanation: " + examples.Explanation.Trim() + "\n" +
+                   "Impact: " + examples.Impact.Trim();
+        }
+
+        public static string BuildCreeiModelSpeechText(CreeiModelExampleSet examples)
+        {
+            if (examples == null) return string.Empty;
+            return "Claim. " + examples.Claim.Trim() + " " +
+                   "Reason. " + examples.Reason.Trim() + " " +
+                   "Evidence. " + examples.Evidence.Trim() + " " +
+                   "Explanation. " + examples.Explanation.Trim() + " " +
+                   "Impact. " + examples.Impact.Trim();
         }
 
         private static int CountSentences(string text)
@@ -399,6 +450,8 @@ namespace Game.Debate
                 CoachFeedbackPurpose.TargetedAdvice => "Use 4 to 6 complete English sentences of targeted advice.",
                 CoachFeedbackPurpose.DirectAdvice => "Use 4 to 6 complete English sentences of direct, detailed advice.",
                 CoachFeedbackPurpose.ConversationalFollowUp => "Use 3 to 6 complete English sentences that directly answer the learner.",
+                CoachFeedbackPurpose.CreeiModelAnswer =>
+                    "Return all five valid creei_examples fields, with exactly one complete English sentence in each field.",
                 CoachFeedbackPurpose.Example => "Use exactly one adaptable example sentence.",
                 CoachFeedbackPurpose.AdditionalSuggestion => "Use 2 to 4 complete English sentences.",
                 _ => "Follow the requested feedback contract exactly."
@@ -414,6 +467,9 @@ namespace Game.Debate
             CoachFeedbackRequest request,
             CoachFeedbackPurpose purpose)
         {
+            if (purpose == CoachFeedbackPurpose.CreeiModelAnswer)
+                return BuildCreeiModelAnswerPrompt(request);
+
             string task = purpose switch
             {
                 CoachFeedbackPurpose.LearnerSocratic =>
@@ -451,6 +507,28 @@ namespace Game.Debate
                     request, purpose != CoachFeedbackPurpose.CriticalIssue) +
                 BuildConversationHistory(request.ConversationHistory) +
                 "learner_current_turn:\n" + Clean(request.PlayerUtteranceText);
+        }
+
+        private static string BuildCreeiModelAnswerPrompt(CoachFeedbackRequest request)
+        {
+            return
+                "You are Anna, creating a worked example for a CEFR B1-B2 English debate learner.\n" +
+                "Generate one entirely new, coherent argument that supports the specified learner side.\n" +
+                "Do not quote, preserve, rewrite, evaluate, or refer to the learner's current answer.\n" +
+                "The five fields must form one coherent argument in this exact order: claim, reason, evidence, explanation, impact.\n" +
+                "Write exactly one complete English sentence in each field.\n" +
+                "claim: clearly support the learner side.\n" +
+                "reason: directly explain why the claim is true or preferable.\n" +
+                "evidence: give one concrete classroom or real-communication scenario; never invent statistics, studies, sources, or citations.\n" +
+                "explanation: explicitly connect the evidence to the reason and claim.\n" +
+                "impact: identify who is affected and state an important consequence.\n" +
+                "Do not use advice or meta-language such as 'you should', 'try to', 'your answer', or 'your claim'.\n" +
+                "Return one JSON object only, with feedback_type, feedback_level, creei_examples, next_action, and target_success_criterion.\n" +
+                "creei_examples must be an object with exactly these string fields: claim, reason, evidence, explanation, impact.\n" +
+                "Do not add feedback_text, Markdown, or any text outside the JSON object.\n\n" +
+                "Context:\n" +
+                "topic: " + Clean(request.Topic) + "\n" +
+                "learner_side: " + Clean(request.PlayerSide);
         }
 
         private static string BuildConversationHistory(CoachConversationTurn[] turns)
@@ -613,6 +691,8 @@ namespace Game.Debate
         public JObject BuildOpenAIRequestJson(CoachFeedbackRequest request)
         {
             CoachFeedbackRequest safeRequest = request ?? new CoachFeedbackRequest();
+            bool creeiModelAnswer =
+                safeRequest.Purpose == CoachFeedbackPurpose.CreeiModelAnswer;
             return new JObject
             {
                 ["model"] = _model,
@@ -623,7 +703,9 @@ namespace Game.Debate
                     new JObject
                     {
                         ["role"] = "system",
-                        ["content"] = safeRequest.FeedbackLevel == CoachFeedbackLevel.Level3
+                        ["content"] = creeiModelAnswer
+                            ? "Return strict JSON with a creei_examples object containing exactly one English sentence for claim, reason, evidence, explanation, and impact."
+                            : safeRequest.FeedbackLevel == CoachFeedbackLevel.Level3
                             ? "Return strict JSON. feedback_text must be one speakable example sentence, never advice, evaluation, or meta-commentary. Write in English only."
                             : safeRequest.DetailedJson
                                 ? "Return only strict JSON for a detailed debate Coach Agent feedback result. Write feedback_text in English only."
@@ -854,6 +936,7 @@ namespace Game.Debate
             CoachFeedbackPurpose.TargetedAdvice => 400,
             CoachFeedbackPurpose.DirectAdvice => 400,
             CoachFeedbackPurpose.ConversationalFollowUp => 400,
+            CoachFeedbackPurpose.CreeiModelAnswer => 400,
             _ => 500
         };
 
@@ -938,6 +1021,12 @@ namespace Game.Debate
                 feedbackText = CombineAlternativeFeedbackFields(json);
             }
 
+            CreeiModelExampleSet examples = ParseNestedCreeiModelExamples(json);
+            if (!IsValidCreeiModelExampleSet(examples))
+                examples = ParseLabelledCreeiModelExamples(feedbackText);
+            if (IsValidCreeiModelExampleSet(examples))
+                feedbackText = BuildCreeiModelHistoryText(examples);
+
             return new CoachFeedbackResult
             {
                 StrongComponent = ReadString(json, "strong_component", "Claim"),
@@ -950,8 +1039,57 @@ namespace Game.Debate
                     : CoachFeedbackLevel.Level2,
                 FeedbackText = feedbackText,
                 NextAction = ReadString(json, "next_action", "add evidence"),
-                TargetSuccessCriterion = ReadString(json, "target_success_criterion", string.Empty)
+                TargetSuccessCriterion = ReadString(json, "target_success_criterion", string.Empty),
+                CreeiModelExamples = examples
             };
+        }
+
+        private static CreeiModelExampleSet ParseNestedCreeiModelExamples(JObject json)
+        {
+            if (json?["creei_examples"] is not JObject nested)
+                return new CreeiModelExampleSet();
+            return new CreeiModelExampleSet
+            {
+                Claim = ReadString(nested, "claim", string.Empty).Trim(),
+                Reason = ReadString(nested, "reason", string.Empty).Trim(),
+                Evidence = ReadString(nested, "evidence", string.Empty).Trim(),
+                Explanation = ReadString(nested, "explanation", string.Empty).Trim(),
+                Impact = ReadString(nested, "impact", string.Empty).Trim()
+            };
+        }
+
+        private static CreeiModelExampleSet ParseLabelledCreeiModelExamples(string text)
+        {
+            CreeiModelExampleSet result = new();
+            if (string.IsNullOrWhiteSpace(text)) return result;
+            HashSet<string> seenLabels = new(StringComparer.OrdinalIgnoreCase);
+            foreach (string rawLine in text.Replace("\r", string.Empty).Split('\n'))
+            {
+                string line = rawLine.Trim();
+                AssignLabelledValue(line, "Claim:", seenLabels,
+                    value => result.Claim = value);
+                AssignLabelledValue(line, "Reason:", seenLabels,
+                    value => result.Reason = value);
+                AssignLabelledValue(line, "Evidence:", seenLabels,
+                    value => result.Evidence = value);
+                AssignLabelledValue(line, "Explanation:", seenLabels,
+                    value => result.Explanation = value);
+                AssignLabelledValue(line, "Impact:", seenLabels,
+                    value => result.Impact = value);
+            }
+            return result;
+        }
+
+        private static void AssignLabelledValue(
+            string line,
+            string label,
+            ISet<string> seenLabels,
+            Action<string> assign)
+        {
+            if (!line.StartsWith(label, StringComparison.OrdinalIgnoreCase)) return;
+            assign(seenLabels.Add(label)
+                ? line.Substring(label.Length).Trim()
+                : "\0");
         }
 
         private static string CombineAlternativeFeedbackFields(JObject json)

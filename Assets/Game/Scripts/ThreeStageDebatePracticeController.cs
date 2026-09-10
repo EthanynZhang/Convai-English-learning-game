@@ -148,7 +148,7 @@ namespace Game.Debate
         public string Topic => debateTopic;
         public string LearnerStance => learnerStance;
         public string DiagnosisModelVersion => _policyConfig?.DiagnosisModelVersion ?? "coach-diagnosis-local-v3";
-        public string PolicyVersion => _policyConfig?.PolicyVersion ?? "three-mode-v3";
+        public string PolicyVersion => _policyConfig?.PolicyVersion ?? "three-mode-v4";
         public string LogDirectory
         {
             get
@@ -1323,6 +1323,13 @@ namespace Game.Debate
         {
             if (Phase != DebatePracticePhase.CoachInteraction || episodeController == null) return;
             if (_voiceCaptureTarget == DebateVoiceCaptureTarget.LearnerRequest) return;
+            if (Mode == CoachOrchestrationMode.AiLed &&
+                action == CoachLearnerAction.RequestCoach)
+            {
+                // AI-led has no learner-initiated Coach channel. This guard also
+                // protects against stale UI events after a condition transition.
+                return;
+            }
             if (action == CoachLearnerAction.RequestCoach &&
                 Mode == CoachOrchestrationMode.LearnerLed)
             {
@@ -1825,7 +1832,7 @@ namespace Game.Debate
                 CoachTurnIndex = ReadPayloadInt(values, "coach_turn_index"),
                 PolicyVersion = PolicyVersion,
                 DiagnosisModelVersion = DiagnosisModelVersion,
-                FeedbackModelVersion = _policyConfig?.FeedbackModelVersion ?? "coach-feedback-v4"
+                FeedbackModelVersion = _policyConfig?.FeedbackModelVersion ?? "coach-feedback-v5"
             });
         }
 

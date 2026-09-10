@@ -185,7 +185,7 @@ namespace Game.Debate
             "Interaction with others is more beneficial for developing English speaking skills.";
         public const string OpponentStance =
             "Individual practice is more beneficial for developing English speaking skills.";
-        public const float MicroPracticeSeconds = 600f;
+        public const float MicroPracticeSeconds = 720f;
         public const float SustainedSpeechMinimumSeconds = 90f;
         public const float SustainedSpeechMaximumSeconds = 180f;
 

@@ -57,6 +57,17 @@ namespace Game.Debate
                     ControlOwner.Learner);
             }
 
+            // AI-led coaching is fully initiated and paced by Anna. Keep a stale or
+            // programmatically submitted Ask Coach action from reopening the episode.
+            if (input.Mode == CoachOrchestrationMode.AiLed &&
+                input.LearnerAction == CoachLearnerAction.RequestCoach)
+            {
+                decision.Action = CoachPolicyAction.None;
+                decision.NextState = input.EpisodeState;
+                decision.PolicyReason = "AiLedLearnerRequestDisabled";
+                return decision;
+            }
+
             if (input.Mode == CoachOrchestrationMode.AiLed &&
                 input.EpisodeState == CoachEpisodeState.AwaitingLearnerAction &&
                 input.ActionWindowExpired)

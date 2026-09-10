@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -15,8 +16,10 @@ namespace Game.Debate
     {
         public const string AppIdPlayerPrefsKey = "XFYUN_RTASR_APP_ID";
         public const string ApiKeyPlayerPrefsKey = "XFYUN_RTASR_API_KEY";
+        public const string EndpointPlayerPrefsKey = "XFYUN_RTASR_ENDPOINT";
 
         private const string Endpoint = "wss://rtasr.xfyun.cn/v1/ws";
+        private const string EndpointEnvironmentVariable = "XFYUN_RTASR_ENDPOINT";
         private const string ProjectAppId = "";
         private const string ProjectApiKey = "";
         private const int TargetSampleRate = 16000;
@@ -25,6 +28,8 @@ namespace Game.Debate
         private const int PacketIntervalMilliseconds = 40;
         private const int ServerStartTimeoutSeconds = 12;
         private const int FinalResultTimeoutSeconds = 8;
+        private const int MaxConnectionAttempts = 2;
+        private const int ConnectionRetryDelayMilliseconds = 500;
 
         private readonly ConcurrentQueue<Action> _mainThreadActions = new();
         private readonly ConcurrentQueue<byte[]> _audioPackets = new();
@@ -140,8 +145,11 @@ namespace Game.Debate
             _sessionCancellation = new CancellationTokenSource();
             _serverStarted = NewSignal();
             _stopRequested = NewSignal();
+            // Resolve PlayerPrefs-backed settings on Unity's main thread. PlayerPrefs is
+            // not guaranteed to be thread-safe, while RunSessionAsync executes off-thread.
+            string endpoint = ResolveEndpoint();
             IsConnecting = true;
-            _ = RunSessionAsync(appId.Trim(), apiKey.Trim(), _sessionCancellation.Token);
+            _ = RunSessionAsync(appId.Trim(), apiKey.Trim(), endpoint, _sessionCancellation.Token);
         }
 
         public void StopSession()
@@ -176,21 +184,16 @@ namespace Game.Debate
             return transcript;
         }
 
-        private async Task RunSessionAsync(string appId, string apiKey, CancellationToken cancellationToken)
+        private async Task RunSessionAsync(
+            string appId,
+            string apiKey,
+            string endpoint,
+            CancellationToken cancellationToken)
         {
             Task receiveTask = null;
             try
             {
-                _socket = new ClientWebSocket();
-                Task connectTask = _socket.ConnectAsync(BuildEndpointUri(appId, apiKey), cancellationToken);
-                Task connectTimeout = Task.Delay(TimeSpan.FromSeconds(ServerStartTimeoutSeconds), cancellationToken);
-                Task connected = await Task.WhenAny(connectTask, connectTimeout);
-                if (connected != connectTask)
-                {
-                    throw new TimeoutException("Could not connect to iFlytek realtime transcription in time.");
-                }
-
-                await connectTask;
+                await ConnectWithRetryAsync(appId, apiKey, endpoint, cancellationToken);
                 receiveTask = ReceiveLoopAsync(cancellationToken);
 
                 Task startTimeout = Task.Delay(TimeSpan.FromSeconds(ServerStartTimeoutSeconds), cancellationToken);
@@ -534,6 +537,103 @@ namespace Game.Debate
             _audioPackets.Enqueue(packet);
         }
 
+        private async Task ConnectWithRetryAsync(
+            string appId,
+            string apiKey,
+            string endpoint,
+            CancellationToken cancellationToken)
+        {
+            Exception lastException = null;
+            Uri endpointUri = BuildEndpointUri(endpoint, appId, apiKey);
+            for (int attempt = 1; attempt <= MaxConnectionAttempts; attempt++)
+            {
+                // Always use the direct network route; this is intentionally null even when
+                // desktop proxy environment variables are present.
+                Uri proxyUri = ResolveConnectionProxy(attempt);
+                try
+                {
+                    _socket = new ClientWebSocket();
+                    // Scene 04 runs on the participant's normal network route. A configured
+                    // desktop proxy can add a full connection timeout before the direct route
+                    // is tried, so realtime transcription deliberately skips proxy injection.
+                    ConfigureSocketOptions(_socket.Options, proxyUri);
+                    await ConnectWithTimeoutAsync(endpointUri, cancellationToken);
+                    return;
+                }
+                catch (Exception exception)
+                {
+                    lastException = exception;
+                    _socket?.Dispose();
+                    _socket = null;
+                    if (!ShouldRetryConnection(exception, attempt) ||
+                        cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+
+                    Debug.LogWarning(
+                        $"iFlytek WebSocket connection attempt {attempt}/{MaxConnectionAttempts} " +
+                        $"failed; retrying once. endpoint={endpointUri.Host}, " +
+                        $"proxy={(proxyUri == null ? "direct" : "configured")}, " +
+                        $"error={exception.Message}");
+                    await Task.Delay(ConnectionRetryDelayMilliseconds * attempt,
+                        cancellationToken);
+                }
+            }
+
+            throw lastException ?? new WebSocketException(
+                "iFlytek WebSocket connection failed without an exception.");
+        }
+
+        private async Task ConnectWithTimeoutAsync(Uri endpoint, CancellationToken cancellationToken)
+        {
+            using CancellationTokenSource timeoutCancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCancellation.CancelAfter(TimeSpan.FromSeconds(ServerStartTimeoutSeconds));
+            try
+            {
+                await _socket.ConnectAsync(endpoint, timeoutCancellation.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    "Could not connect to iFlytek realtime transcription in time.");
+            }
+        }
+
+        private static void ConfigureSocketOptions(
+            ClientWebSocketOptions options,
+            Uri proxyUri)
+        {
+            if (proxyUri == null)
+            {
+                // Explicitly clear any platform/default proxy inherited by the socket.
+                options.Proxy = null;
+                return;
+            }
+            try
+            {
+                options.Proxy = new WebProxy(proxyUri);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning(
+                    "iFlytek WebSocket proxy could not be configured: " + exception.Message);
+            }
+        }
+
+        private static Uri ResolveConnectionProxy(int attempt)
+        {
+            // Never route participant ASR through the machine's desktop proxy.
+            return null;
+        }
+
+        private static bool ShouldRetryConnection(Exception exception, int attempt)
+        {
+            if (attempt >= MaxConnectionAttempts || exception == null) return false;
+            return exception is WebSocketException or TimeoutException or IOException;
+        }
+
         private void FinalizeResearchAudioCapture()
         {
             if (LastAudioCapture != null || _capturedPcm16.Count == 0) return;
@@ -658,7 +758,7 @@ namespace Game.Debate
             return Microphone.devices[0];
         }
 
-        private static Uri BuildEndpointUri(string appId, string apiKey)
+        private static Uri BuildEndpointUri(string endpoint, string appId, string apiKey)
         {
             long timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             string baseText = appId + timestamp;
@@ -686,7 +786,25 @@ namespace Game.Debate
                 "&ts=" + timestamp +
                 "&signa=" + Uri.EscapeDataString(signature) +
                 "&lang=en&pd=edu&vadMdn=2";
-            return new Uri(Endpoint + "?" + query);
+            return new Uri(endpoint + "?" + query);
+        }
+
+        private static string ResolveEndpoint()
+        {
+            string configured = Environment.GetEnvironmentVariable(EndpointEnvironmentVariable);
+            if (string.IsNullOrWhiteSpace(configured))
+            {
+                configured = PlayerPrefs.GetString(EndpointPlayerPrefsKey, string.Empty);
+            }
+
+            if (Uri.TryCreate(configured?.Trim(), UriKind.Absolute, out Uri endpoint) &&
+                endpoint.Scheme is "ws" or "wss" &&
+                !string.IsNullOrWhiteSpace(endpoint.Host))
+            {
+                return endpoint.AbsoluteUri.TrimEnd('/');
+            }
+
+            return Endpoint;
         }
 
         private static short FloatToPcm16(float sample)
@@ -756,12 +874,34 @@ namespace Game.Debate
 
         private static string BuildNetworkErrorMessage(Exception exception)
         {
-            if (exception is WebSocketException webSocketException)
+            string message = exception?.Message ?? "Unknown transport error.";
+            string innerMessage = exception?.InnerException?.Message ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(innerMessage) &&
+                !message.Contains(innerMessage, StringComparison.Ordinal))
             {
-                return "Could not connect to iFlytek realtime transcription: " + webSocketException.Message;
+                message += " Inner error: " + innerMessage;
             }
 
-            return "iFlytek realtime transcription failed: " + exception.Message;
+            string host = "rtasr.xfyun.cn";
+            if (Uri.TryCreate(ResolveEndpointForDiagnostics(), UriKind.Absolute, out Uri endpoint))
+            {
+                host = endpoint.Host;
+            }
+
+            return "Could not connect to iFlytek realtime transcription: " + message +
+                   $" endpoint={host}; proxy=skipped. " +
+                   "Reason: network/DNS/TLS problem. Check the direct network route, " +
+                   "firewall, and iFlytek service access.";
+        }
+
+        private static string ResolveEndpointForDiagnostics()
+        {
+            string configured = Environment.GetEnvironmentVariable(EndpointEnvironmentVariable);
+            return Uri.TryCreate(configured?.Trim(), UriKind.Absolute, out Uri endpoint) &&
+                   endpoint.Scheme is "ws" or "wss" &&
+                   !string.IsNullOrWhiteSpace(endpoint.Host)
+                ? endpoint.AbsoluteUri.TrimEnd('/')
+                : Endpoint;
         }
 
         [Serializable]

@@ -73,6 +73,7 @@ namespace Game.Debate
         private string _lastLoggedSnapshotId = string.Empty;
         private string _criticalFeedback = string.Empty;
         private string _currentFeedback = string.Empty;
+        private CreeiModelExampleSet _aiLedCreeiModelExamples;
         private string _learnerRequest = string.Empty;
         private string _learnerRequestInputModality = "text";
         private CreeiComponent? _recordingComponent;
@@ -150,6 +151,7 @@ namespace Game.Debate
             _lastLoggedSnapshotId = string.Empty;
             _criticalFeedback = string.Empty;
             _currentFeedback = string.Empty;
+            _aiLedCreeiModelExamples = null;
             _learnerRequest = string.Empty;
             _learnerRequestInputModality = "text";
             _conversationHistory.Clear();
@@ -160,6 +162,7 @@ namespace Game.Debate
             _technicalFailureOperation = PendingOperation.None;
             IsActive = true;
             _view.Show(_host.Topic, _host.LearnerStance, _session.RemainingSeconds);
+            _view.ClearCreeiModelExamples();
             _view.SetDialogue(string.Empty, string.Empty);
             _host.RecordMicroEvent("WorkbenchOpened", new
             {
@@ -404,7 +407,8 @@ namespace Game.Debate
             {
                 CreeiComponent focus = EffectiveFocus();
                 _session.StartCoach(focus);
-                IssueFeedbackRequest(focus, CoachFeedbackPurpose.DirectAdvice, false);
+                IssueFeedbackRequest(focus, CoachFeedbackPurpose.CreeiModelAnswer,
+                    false);
                 return;
             }
             BeginCriticalFeedback(false);
@@ -620,6 +624,8 @@ namespace Game.Debate
                     "Anna is preparing detailed advice about the issue you reviewed...",
                 CoachFeedbackPurpose.DirectAdvice =>
                     "Anna is preparing direct, detailed feedback on your argument...",
+                CoachFeedbackPurpose.CreeiModelAnswer =>
+                    "Anna is preparing a complete five-part CREEI model argument...",
                 CoachFeedbackPurpose.ConversationalFollowUp =>
                     "Anna is preparing a direct answer to your question...",
                 CoachFeedbackPurpose.Example => "Anna is preparing one adaptable example...",
@@ -707,7 +713,24 @@ namespace Game.Debate
             }
             _pendingOperation = PendingOperation.None;
             MarkTechnicalRecovery(PendingOperation.Feedback);
-            _currentFeedback = EnglishLlmInputSanitizer.Sanitize(result.FeedbackText);
+            bool isCreeiModelAnswer =
+                _activePurpose == CoachFeedbackPurpose.CreeiModelAnswer;
+            if (isCreeiModelAnswer &&
+                !DebateCoachFeedbackGenerator.IsValidCreeiModelExampleSet(
+                    result.CreeiModelExamples))
+            {
+                EnterTechnicalError(
+                    "Anna returned an incomplete CREEI model argument.",
+                    PendingOperation.Feedback);
+                return;
+            }
+            _aiLedCreeiModelExamples = isCreeiModelAnswer
+                ? result.CreeiModelExamples
+                : _aiLedCreeiModelExamples;
+            _currentFeedback = isCreeiModelAnswer
+                ? DebateCoachFeedbackGenerator.BuildCreeiModelHistoryText(
+                    _aiLedCreeiModelExamples)
+                : EnglishLlmInputSanitizer.Sanitize(result.FeedbackText);
             if (string.IsNullOrWhiteSpace(_currentFeedback))
             {
                 EnterTechnicalError(
@@ -715,25 +738,62 @@ namespace Game.Debate
                 return;
             }
             AddConversationTurn(_learnerRequest, _currentFeedback, _activePurpose);
-            _view.SetDialogue("Coach Anna", _currentFeedback);
+            if (isCreeiModelAnswer)
+            {
+                _view.SetDialogue(string.Empty, string.Empty);
+                _view.ShowCreeiModelExamples(_aiLedCreeiModelExamples);
+            }
+            else
+            {
+                _view.SetDialogue("Coach Anna", _currentFeedback);
+            }
             _view.SetStatus("Listen to Anna, then choose your next step.");
             _view.SetInputsInteractable(true);
-            string eventType = _activePurpose is CoachFeedbackPurpose.TargetedAdvice or
-                CoachFeedbackPurpose.DirectAdvice
-                ? "coach_advice_presented"
-                : "CoachFeedbackPresented";
-            _host.RecordMicroEvent(eventType, new
+            if (isCreeiModelAnswer)
             {
-                round_index = _session.CurrentRoundIndex,
-                component = EffectiveFocus().ToString(),
-                learner_request = _learnerRequest,
-                feedback_text = _currentFeedback,
-                feedback_purpose = _activePurpose.ToString(),
-                coach_turn_index = _conversationHistory.Count
-            });
+                _host.RecordMicroEvent("ai_creei_model_presented", new
+                {
+                    round_index = _session.CurrentRoundIndex,
+                    turn_index = _conversationHistory.Count,
+                    coach_turn_index = _conversationHistory.Count,
+                    actor = "coach",
+                    initiator = "coach",
+                    target = "whole_argument",
+                    feedback_purpose = CoachFeedbackPurpose.CreeiModelAnswer.ToString(),
+                    example_set_version = "creei-worked-example-v1",
+                    claim_example = _aiLedCreeiModelExamples.Claim,
+                    reason_example = _aiLedCreeiModelExamples.Reason,
+                    evidence_example = _aiLedCreeiModelExamples.Evidence,
+                    explanation_example = _aiLedCreeiModelExamples.Explanation,
+                    impact_example = _aiLedCreeiModelExamples.Impact,
+                    feedback_text = _currentFeedback
+                });
+            }
+            else
+            {
+                string eventType =
+                    _activePurpose is CoachFeedbackPurpose.TargetedAdvice or
+                        CoachFeedbackPurpose.DirectAdvice
+                        ? "coach_advice_presented"
+                        : "CoachFeedbackPresented";
+                _host.RecordMicroEvent(eventType, new
+                {
+                    round_index = _session.CurrentRoundIndex,
+                    component = EffectiveFocus().ToString(),
+                    learner_request = _learnerRequest,
+                    feedback_text = _currentFeedback,
+                    feedback_purpose = _activePurpose.ToString(),
+                    coach_turn_index = _conversationHistory.Count
+                });
+            }
             string requestForHistory = _learnerRequest;
             CoachFeedbackPurpose purposeForHistory = _activePurpose;
-            _host.SpeakAnna(_currentFeedback, spoken =>
+            string feedbackForHistory = _currentFeedback;
+            string speechText = isCreeiModelAnswer
+                ? DebateCoachFeedbackGenerator.BuildCreeiModelSpeechText(
+                    _aiLedCreeiModelExamples)
+                : _currentFeedback;
+            _host.SpeakAnna(speechText, spoken =>
             {
                 if (!IsActive || _session.CurrentState != MicroCreeiPracticeState.CoachSpeaking)
                     return;
@@ -741,7 +801,7 @@ namespace Game.Debate
                     _session.CurrentRoundIndex,
                     purposeForHistory,
                     requestForHistory,
-                    _currentFeedback,
+                    feedbackForHistory,
                     spoken);
                 _host.RecordMicroEvent("CoachFeedbackSpoken", new
                 {
@@ -766,7 +826,9 @@ namespace Game.Debate
                 }
                 else
                 {
-                    _view.SetStatus("Ask Anna another question, or revise and submit the CREEI cards.");
+                    _view.SetStatus(isCreeiModelAnswer
+                        ? "Use Anna's five examples as a guide. Ask Anna a question, or revise and submit your own CREEI cards."
+                        : "Ask Anna another question, or revise and submit the CREEI cards.");
                 }
                 Render();
             });
@@ -774,7 +836,9 @@ namespace Game.Debate
 
         private static bool IsUsable(CoachFeedbackResult result) =>
             result != null && result.Source == CoachFeedbackSource.OpenAI &&
-            !string.IsNullOrWhiteSpace(result.FeedbackText);
+            (!string.IsNullOrWhiteSpace(result.FeedbackText) ||
+             DebateCoachFeedbackGenerator.IsValidCreeiModelExampleSet(
+                 result.CreeiModelExamples));
 
         private void AddConversationTurn(
             string learnerRequest,
@@ -831,8 +895,10 @@ namespace Game.Debate
             _session.BeginNextRound();
             _criticalFeedback = string.Empty;
             _currentFeedback = string.Empty;
+            _aiLedCreeiModelExamples = null;
             _learnerRequest = string.Empty;
             _sharedFollowupsVisible = false;
+            _view.ClearCreeiModelExamples();
             _view.SetDialogue(string.Empty, string.Empty);
             PresentCoachOpportunity();
             Render();

@@ -137,9 +137,9 @@ namespace Game.Debate
         public float AiLedActionWindowSeconds = 15f;
         public float LearnerSpeechMinimumSeconds = 60f;
         public float LearnerSpeechMaximumSeconds = 90f;
-        public string PolicyVersion = "three-mode-v3";
+        public string PolicyVersion = "three-mode-v4";
         public string DiagnosisModelVersion = "coach-diagnosis-local-v3";
-        public string FeedbackModelVersion = "coach-feedback-v4";
+        public string FeedbackModelVersion = "coach-feedback-v5";
 
         public static CoachPolicyConfig CreateDefault() => new();
     }

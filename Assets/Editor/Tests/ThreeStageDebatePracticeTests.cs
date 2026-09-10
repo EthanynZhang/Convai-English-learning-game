@@ -116,15 +116,15 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void MicroPracticeUsesTenMinuteWindowAndAllowsFreeToggling()
+        public void MicroPracticeUsesTwelveMinuteWindowAndAllowsFreeToggling()
         {
-            Assert.AreEqual(600f, ThreeStageDebatePracticeRules.MicroPracticeSeconds);
+            Assert.AreEqual(720f, ThreeStageDebatePracticeRules.MicroPracticeSeconds);
             Assert.IsTrue(ThreeStageDebatePracticeRules.CanStopRecording(
                 DebatePracticeStage.MicroPractice, 0f));
             Assert.IsTrue(ThreeStageDebatePracticeRules.CanStopRecording(
                 DebatePracticeStage.MicroPractice, 12.5f));
             Assert.IsTrue(ThreeStageDebatePracticeRules.IsStageTimeExpired(
-                DebatePracticeStage.MicroPractice, 600f));
+                DebatePracticeStage.MicroPractice, 720f));
         }
 
         [Test]
@@ -211,7 +211,7 @@ namespace Game.Tests.EditMode
             Assert.IsNull(ThreeStageDebatePracticeRules.Next(DebatePracticeStage.RevisionSpeech));
         }
 
-        [TestCase(DebatePracticeStage.MicroPractice, "CREEI Workbench", 1, 600f)]
+        [TestCase(DebatePracticeStage.MicroPractice, "CREEI Workbench", 1, 720f)]
         [TestCase(DebatePracticeStage.FullSpeechWithFeedback, "Full Speech + Coach Feedback", 2, 180f)]
         [TestCase(DebatePracticeStage.RevisionSpeech, "Revision Speech", 3, 180f)]
         public void StagePresentationIsStable(

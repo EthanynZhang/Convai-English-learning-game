@@ -261,7 +261,7 @@ namespace Game.Debate
                     "• Practice 1 is a one-to-one coaching workbench with Anna.\n\n" +
                     conditionGuidance + "\n\n" +
                     "WHAT YOU WILL DO\n" +
-                    "Practice 1 — CREEI Workbench (up to 10 minutes): complete five connected CREEI cards, interact with Anna according to your condition, and revise the structure.\n" +
+                    "Practice 1 — CREEI Workbench (up to 12 minutes): complete five connected CREEI cards, interact with Anna according to your condition, and revise the structure.\n" +
                     "Practice 2 — Full Speech + Coach Feedback: deliver one complete speech for at least 90 seconds, then receive feedback.\n" +
                     "Practice 3 — Revision Speech: deliver a second complete speech for at least 90 seconds. Anna stays silent while the system records the assessment.\n\n" +
                     "In Practice 1, select a card before pressing T so speech is added only to that card. Press T to start or stop the complete speech in Practices 2 and 3.";
@@ -807,6 +807,7 @@ namespace Game.Debate
 
         private void ApplyConditionIdentity(CoachOrchestrationMode mode)
         {
+            _selectedMode = mode;
             string label;
             Color color;
             switch (mode)
@@ -829,6 +830,17 @@ namespace Game.Debate
             if (_conditionAuthorityBanner != null &&
                 _conditionAuthorityBanner.TryGetComponent(out Image image))
                 image.color = color;
+
+            // Ask Coach is a learner-initiated control and must not remain as a
+            // stale button when the AI-led condition is displayed.
+            if (_coachButtons.TryGetValue(CoachLearnerAction.RequestCoach, out Button askCoach) &&
+                askCoach != null)
+            {
+                askCoach.gameObject.SetActive(mode != CoachOrchestrationMode.AiLed &&
+                                              askCoach.gameObject.activeSelf);
+            }
+            if (mode == CoachOrchestrationMode.AiLed)
+                SetLearnerRequestVisible(false);
         }
 
         private void SetCoachActionLabel(CoachLearnerAction action, string label)

@@ -85,6 +85,21 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void AiLedRejectsLearnerAskCoachActionAfterAutomaticFeedback()
+        {
+            CoachOrchestrationPolicy policy = new(CoachPolicyConfig.CreateDefault());
+            CoachPolicyInput input = CreateDiagnosingInput(CoachOrchestrationMode.AiLed, 3, 0.9f);
+            input.EpisodeState = CoachEpisodeState.AwaitingLearnerAction;
+            input.LearnerAction = CoachLearnerAction.RequestCoach;
+
+            CoachPolicyDecision decision = policy.Evaluate(input);
+
+            Assert.AreEqual(CoachPolicyAction.None, decision.Action);
+            Assert.AreEqual(CoachEpisodeState.AwaitingLearnerAction, decision.NextState);
+            Assert.AreEqual("AiLedLearnerRequestDisabled", decision.PolicyReason);
+        }
+
+        [Test]
         public void AiLedBelowThresholdLogsOpportunityWithoutCreatingEpisodeSummary()
         {
             string directory = Path.Combine(Path.GetTempPath(), "coach-no-episode-" + Guid.NewGuid().ToString("N"));
@@ -883,7 +898,7 @@ namespace Game.Tests.EditMode
         {
             CoachPolicyConfig config = CoachPolicyConfig.CreateDefault();
             Assert.AreEqual("coach-diagnosis-local-v3", config.DiagnosisModelVersion);
-            Assert.AreEqual("coach-feedback-v4", config.FeedbackModelVersion);
+            Assert.AreEqual("coach-feedback-v5", config.FeedbackModelVersion);
             foreach (string field in new[]
                      {
                          "CreeiMissingOrWeakComponents",

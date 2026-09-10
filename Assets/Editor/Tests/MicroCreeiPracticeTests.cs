@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using TMPro;
 using UnityEngine;
@@ -200,18 +201,22 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void CoachFeedbackPurposesDeclareTheSevenPromptContracts()
+        public void CoachFeedbackPurposesDeclareTheWorkedExampleContract()
         {
             Type purpose = RuntimeType("CoachFeedbackPurpose");
             CollectionAssert.AreEquivalent(new[]
             {
                 "LearnerSocratic", "CriticalIssue", "TargetedAdvice", "Example",
-                "AdditionalSuggestion", "DirectAdvice", "ConversationalFollowUp"
+                "AdditionalSuggestion", "DirectAdvice", "ConversationalFollowUp",
+                "CreeiModelAnswer"
             }, Enum.GetNames(purpose));
             Type request = RuntimeType("CoachFeedbackRequest");
             Assert.IsNotNull(request.GetField("Purpose"));
             Assert.IsNotNull(request.GetField("ConversationHistory"));
             Assert.IsNotNull(request.GetField("AcceptedCriticalFeedback"));
+            Type result = RuntimeType("CoachFeedbackResult");
+            Assert.IsNotNull(RuntimeType("CreeiModelExampleSet"));
+            Assert.IsNotNull(result.GetField("CreeiModelExamples"));
         }
 
         [Test]
@@ -237,6 +242,128 @@ namespace Game.Tests.EditMode
             StringAssert.Contains("answer", followUp);
             StringAssert.Contains("one adaptable example sentence", PromptFor("Example"));
             StringAssert.Contains("do not repeat", PromptFor("AdditionalSuggestion"));
+            string model = PromptFor("CreeiModelAnswer");
+            foreach (string component in new[]
+                     {
+                         "claim", "reason", "evidence", "explanation", "impact"
+                     })
+                StringAssert.Contains(component, model);
+            StringAssert.Contains("creei_examples", model);
+            StringAssert.Contains("one coherent argument", model);
+            StringAssert.Contains("individual practice or interaction", model);
+            StringAssert.Contains("interaction better supports speaking", model);
+            StringAssert.DoesNotContain("can you give me evidence", model);
+            StringAssert.DoesNotContain("accepted critical feedback", model);
+            StringAssert.DoesNotContain("current_creei_argument", model);
+        }
+
+        [Test]
+        public void CreeiModelExamplesValidateAndProduceCanonicalHistoryAndSpeech()
+        {
+            Type setType = RuntimeType("CreeiModelExampleSet");
+            object examples = Activator.CreateInstance(setType);
+            setType.GetField("Claim").SetValue(examples,
+                "Interaction with other people is the best way to improve English speaking.");
+            setType.GetField("Reason").SetValue(examples,
+                "It gives learners regular practice in responding to different ideas.");
+            setType.GetField("Evidence").SetValue(examples,
+                "For example, classmates can ask unexpected questions during a group discussion.");
+            setType.GetField("Explanation").SetValue(examples,
+                "Answering those questions connects speaking practice with real communication.");
+            setType.GetField("Impact").SetValue(examples,
+                "As a result, learners become more confident in conversations outside class.");
+
+            Type generator = RuntimeType("DebateCoachFeedbackGenerator");
+            MethodInfo valid = generator.GetMethod("IsValidCreeiModelExampleSet",
+                BindingFlags.Public | BindingFlags.Static);
+            Assert.IsTrue((bool)valid.Invoke(null, new[] { examples }));
+
+            string history = (string)generator.GetMethod("BuildCreeiModelHistoryText",
+                    BindingFlags.Public | BindingFlags.Static)
+                .Invoke(null, new[] { examples });
+            string speech = (string)generator.GetMethod("BuildCreeiModelSpeechText",
+                    BindingFlags.Public | BindingFlags.Static)
+                .Invoke(null, new[] { examples });
+            StringAssert.StartsWith("Claim: Interaction", history);
+            StringAssert.Contains("\nReason:", history);
+            StringAssert.Contains("\nImpact:", history);
+            StringAssert.StartsWith("Claim. Interaction", speech);
+            Assert.Less(speech.IndexOf("Claim.", StringComparison.Ordinal),
+                speech.IndexOf("Reason.", StringComparison.Ordinal));
+            Assert.Less(speech.IndexOf("Evidence.", StringComparison.Ordinal),
+                speech.IndexOf("Explanation.", StringComparison.Ordinal));
+            Assert.Less(speech.IndexOf("Explanation.", StringComparison.Ordinal),
+                speech.IndexOf("Impact.", StringComparison.Ordinal));
+
+            setType.GetField("Impact").SetValue(examples, string.Empty);
+            Assert.IsFalse((bool)valid.Invoke(null, new[] { examples }));
+            setType.GetField("Impact").SetValue(examples,
+                "You should explain why this matters.");
+            Assert.IsFalse((bool)valid.Invoke(null, new[] { examples }));
+            setType.GetField("Impact").SetValue(examples,
+                "This matters. It improves confidence.");
+            Assert.IsFalse((bool)valid.Invoke(null, new[] { examples }));
+            setType.GetField("Impact").SetValue(examples, "12345.");
+            Assert.IsFalse((bool)valid.Invoke(null, new[] { examples }));
+        }
+
+        [Test]
+        public void CreeiModelParserReadsNestedJsonAndLabelledFallback()
+        {
+            Type generator = RuntimeType("DebateCoachFeedbackGenerator");
+            MethodInfo parse = generator.GetMethod("ParseResultJson",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            JObject nested = JObject.Parse(@"{
+                'feedback_type':'CREEI Model Answer',
+                'feedback_level':'Level2',
+                'creei_examples':{
+                    'claim':'Interaction is the best way to improve speaking.',
+                    'reason':'It requires learners to respond to other people.',
+                    'evidence':'For example, classmates can ask unexpected questions.',
+                    'explanation':'These questions turn language knowledge into real communication.',
+                    'impact':'Learners become more confident outside the classroom.'
+                },
+                'next_action':'revise',
+                'target_success_criterion':'five connected parts'
+            }");
+            object nestedResult = parse.Invoke(null, new object[] { nested });
+            object nestedExamples = nestedResult.GetType().GetField("CreeiModelExamples")
+                .GetValue(nestedResult);
+            Assert.AreEqual("Interaction is the best way to improve speaking.",
+                nestedExamples.GetType().GetField("Claim").GetValue(nestedExamples));
+            StringAssert.Contains("Claim: Interaction",
+                nestedResult.GetType().GetField("FeedbackText").GetValue(nestedResult).ToString());
+
+            JObject labelled = new()
+            {
+                ["feedback_text"] =
+                    "Claim: Interaction is the best way to improve speaking.\n" +
+                    "Reason: It requires learners to respond to other people.\n" +
+                    "Evidence: For example, classmates can ask unexpected questions.\n" +
+                    "Explanation: These questions turn language knowledge into real communication.\n" +
+                    "Impact: Learners become more confident outside the classroom."
+            };
+            object fallbackResult = parse.Invoke(null, new object[] { labelled });
+            object fallbackExamples = fallbackResult.GetType().GetField("CreeiModelExamples")
+                .GetValue(fallbackResult);
+            Assert.AreEqual("Learners become more confident outside the classroom.",
+                fallbackExamples.GetType().GetField("Impact").GetValue(fallbackExamples));
+
+            nested["creei_examples"]["impact"] =
+                "学习者 Learners become more confident outside the classroom.";
+            object mixedLanguageResult = parse.Invoke(null, new object[] { nested });
+            object mixedLanguageExamples = mixedLanguageResult.GetType()
+                .GetField("CreeiModelExamples").GetValue(mixedLanguageResult);
+            MethodInfo valid = generator.GetMethod("IsValidCreeiModelExampleSet",
+                BindingFlags.Public | BindingFlags.Static);
+            Assert.IsFalse((bool)valid.Invoke(null, new[] { mixedLanguageExamples }));
+
+            labelled["feedback_text"] +=
+                "\nImpact: A repeated impact must invalidate the result.";
+            object duplicateResult = parse.Invoke(null, new object[] { labelled });
+            object duplicateExamples = duplicateResult.GetType()
+                .GetField("CreeiModelExamples").GetValue(duplicateResult);
+            Assert.IsFalse((bool)valid.Invoke(null, new[] { duplicateExamples }));
         }
 
         [TestCase("LearnerSocratic", "One. Two? Three!", true)]
@@ -391,9 +518,9 @@ namespace Game.Tests.EditMode
                 "Assets/Game/Scripts/CoachOrchestrationTypes.cs");
             StringAssert.Contains("new Scene04LocalCreeiDiagnosisEngine", controller);
             StringAssert.DoesNotContain("_structuredDiagnosisEngine = new StructuredCreeiArgumentDiagnosisEngine", controller);
-            StringAssert.Contains("three-mode-v3", config);
+            StringAssert.Contains("three-mode-v4", config);
             StringAssert.Contains("coach-diagnosis-local-v3", config);
-            StringAssert.Contains("coach-feedback-v4", config);
+            StringAssert.Contains("coach-feedback-v5", config);
         }
 
         [Test]
@@ -447,6 +574,8 @@ namespace Game.Tests.EditMode
                 new[] { Enum.Parse(purpose, "CriticalIssue") }));
             Assert.AreEqual(400, maxTokens.Invoke(null,
                 new[] { Enum.Parse(purpose, "DirectAdvice") }));
+            Assert.AreEqual(400, maxTokens.Invoke(null,
+                new[] { Enum.Parse(purpose, "CreeiModelAnswer") }));
             string source = File.ReadAllText(
                 "Assets/Game/Scripts/DebateCoachFeedbackGenerator.cs");
             StringAssert.Contains("useScene04Budget ? 18f", source);
@@ -500,6 +629,55 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void WorkedExamplesAppearInsideCardsWithoutChangingLearnerInputs()
+        {
+            GameObject canvasObject = new("Canvas", typeof(RectTransform), typeof(Canvas));
+            GameObject viewObject = new("Worked Example View");
+            try
+            {
+                Canvas canvas = canvasObject.GetComponent<Canvas>();
+                canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                Component view = viewObject.AddComponent(RuntimeType("MicroCreeiWorkbenchView"));
+                view.GetType().GetMethod("Build").Invoke(view, new object[] { canvas });
+
+                TMP_InputField claimInput = canvasObject.GetComponentsInChildren<TMP_InputField>(true)
+                    .Single(input => input.gameObject.name == "CREEI Input Claim");
+                claimInput.text = "Learner's original claim.";
+                TMP_Text claimExample = canvasObject.GetComponentsInChildren<TMP_Text>(true)
+                    .Single(text => text.gameObject.name == "CREEI Model Example Claim");
+                Assert.IsFalse(claimExample.gameObject.activeSelf);
+
+                Type setType = RuntimeType("CreeiModelExampleSet");
+                object examples = Activator.CreateInstance(setType);
+                foreach (string component in new[]
+                         {
+                             "Claim", "Reason", "Evidence", "Explanation", "Impact"
+                         })
+                    setType.GetField(component).SetValue(examples,
+                        component + " model sentence.");
+                view.GetType().GetMethod("ShowCreeiModelExamples")
+                    .Invoke(view, new[] { examples });
+
+                Assert.IsTrue(claimExample.gameObject.activeSelf);
+                Assert.AreEqual("Anna's example: Claim model sentence.", claimExample.text);
+                Assert.AreEqual("Learner's original claim.", claimInput.text);
+                Assert.AreEqual(5, canvasObject.GetComponentsInChildren<TMP_Text>(true)
+                    .Count(text => text.gameObject.name.StartsWith(
+                        "CREEI Model Example ", StringComparison.Ordinal) &&
+                                   text.gameObject.activeSelf));
+
+                view.GetType().GetMethod("ClearCreeiModelExamples").Invoke(view, null);
+                Assert.IsFalse(claimExample.gameObject.activeSelf);
+                Assert.AreEqual("Learner's original claim.", claimInput.text);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(viewObject);
+                UnityEngine.Object.DestroyImmediate(canvasObject);
+            }
+        }
+
+        [Test]
         public void ResponsiveWorkspaceUsesTheFrozenWidthClamp()
         {
             MethodInfo width = RuntimeType("MicroCreeiWorkbenchView")
@@ -532,10 +710,16 @@ namespace Game.Tests.EditMode
             StringAssert.DoesNotContain("public void RequestChallenge(", host);
             StringAssert.DoesNotContain("public void SpeakLeo(", host);
             StringAssert.DoesNotContain("challenge from Leo", types);
-            StringAssert.Contains("three-mode-v3", File.ReadAllText(
+            StringAssert.Contains("three-mode-v4", File.ReadAllText(
                 "Assets/Game/Scripts/CoachOrchestrationTypes.cs"));
-            StringAssert.Contains("coach-feedback-v4", File.ReadAllText(
+            StringAssert.Contains("coach-feedback-v5", File.ReadAllText(
                 "Assets/Game/Scripts/CoachOrchestrationTypes.cs"));
+            StringAssert.Contains(
+                "IssueFeedbackRequest(focus, CoachFeedbackPurpose.CreeiModelAnswer",
+                controller);
+            StringAssert.DoesNotContain(
+                "IssueFeedbackRequest(focus, CoachFeedbackPurpose.DirectAdvice",
+                controller);
         }
 
         [Test]
@@ -554,9 +738,15 @@ namespace Game.Tests.EditMode
                          "learner_followup_submitted",
                          "coach_example_requested",
                          "coach_more_suggestions_requested",
-                         "coach_advice_presented"
+                         "coach_advice_presented",
+                         "ai_creei_model_presented"
                      })
                 StringAssert.Contains(eventName, controller);
+            StringAssert.Contains("creei-worked-example-v1", controller);
+            StringAssert.Contains("aicreeimodelpresented",
+                File.ReadAllText(
+                    "Assets/Game/Scripts/ResearchEpistemicActionAnnotator.cs")
+                    .ToLowerInvariant());
             foreach (string field in new[]
                      {
                          "AgendaText = ReadPayload",

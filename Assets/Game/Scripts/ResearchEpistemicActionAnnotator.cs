@@ -42,7 +42,8 @@ namespace Game.Debate
             "coachfeedbackpresented",
             "feedbackshown",
             "coachexamplepresented",
-            "coachadditionalsuggestionpresented"
+            "coachadditionalsuggestionpresented",
+            "aicreeimodelpresented"
         };
 
         private static readonly HashSet<string> EvaluationEvents = new()

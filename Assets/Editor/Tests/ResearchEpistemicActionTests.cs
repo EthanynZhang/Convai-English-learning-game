@@ -81,6 +81,29 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void AiCreeiModelPresentationIsCoachStrategyGenerationForWholeArgument()
+        {
+            ResearchLogEvent row = new()
+            {
+                EventType = "ai_creei_model_presented",
+                Actor = "system",
+                PayloadJson =
+                    "{\"feedback_purpose\":\"CreeiModelAnswer\"," +
+                    "\"target\":\"whole_argument\"," +
+                    "\"example_set_version\":\"creei-worked-example-v1\"}"
+            };
+
+            ResearchEpistemicActionAnnotator.Annotate(row);
+
+            Assert.AreEqual("strategy_generation", row.EpistemicAction);
+            Assert.AreEqual("coach", row.EpistemicActor);
+            Assert.AreEqual("coach", row.EpistemicInitiator);
+            Assert.AreEqual("coach", row.EpistemicDecisionOwner);
+            Assert.AreEqual("whole_argument", row.EpistemicTarget);
+            Assert.AreEqual("presented", row.EpistemicOutcome);
+        }
+
+        [Test]
         public void SessionEventsPersistEpistemicFieldsToJsonlAndCsv()
         {
             string root = Path.Combine(Path.GetTempPath(),

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.WebSockets;
 using System.Reflection;
 using Game.Debate;
 using Newtonsoft.Json;
@@ -287,6 +288,62 @@ namespace Game.Tests.EditMode
             {
                 UnityEngine.Object.DestroyImmediate(gameObject);
             }
+        }
+
+        [Test]
+        public void RealtimeTranscriberUsesDirectConnectionEvenWhenProxyIsConfigured()
+        {
+            Type type = typeof(XfyunRealtimeTranscriber);
+            MethodInfo resolver = type.GetMethod(
+                "ResolveConnectionProxy", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(resolver);
+
+            string previous = Environment.GetEnvironmentVariable("HTTPS_PROXY");
+            try
+            {
+                Environment.SetEnvironmentVariable("HTTPS_PROXY", "http://127.0.0.1:7897");
+                Uri proxy = (Uri)resolver.Invoke(null, new object[] { 1 });
+                Assert.IsNull(proxy);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("HTTPS_PROXY", previous);
+            }
+        }
+
+        [Test]
+        public void RealtimeTranscriberRetriesTransientWebSocketConnectionFailuresOnce()
+        {
+            MethodInfo retry = typeof(XfyunRealtimeTranscriber).GetMethod(
+                "ShouldRetryConnection", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(retry);
+
+            bool first = (bool)retry.Invoke(null,
+                new object[] { new WebSocketException("connect failed"), 1 });
+            bool second = (bool)retry.Invoke(null,
+                new object[] { new WebSocketException("connect failed"), 2 });
+            bool unrelated = (bool)retry.Invoke(null,
+                new object[] { new InvalidOperationException("bad state"), 1 });
+
+            Assert.IsTrue(first);
+            Assert.IsFalse(second);
+            Assert.IsFalse(unrelated);
+        }
+
+        [Test]
+        public void RealtimeTranscriberConnectionFailureIncludesSafeTransportDiagnostics()
+        {
+            MethodInfo formatter = typeof(XfyunRealtimeTranscriber).GetMethod(
+                "BuildNetworkErrorMessage", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(formatter);
+
+            string message = (string)formatter.Invoke(null,
+                new object[] { new WebSocketException("Unable to connect to the remote server") });
+
+            StringAssert.Contains("Could not connect to iFlytek realtime transcription", message);
+            StringAssert.Contains("rtasr.xfyun.cn", message);
+            StringAssert.Contains("proxy", message.ToLowerInvariant());
+            StringAssert.DoesNotContain("signa=", message);
         }
 
         [Test]

@@ -92,7 +92,28 @@ namespace Game.Debate
         Example,
         AdditionalSuggestion,
         DirectAdvice,
-        ConversationalFollowUp
+        ConversationalFollowUp,
+        CreeiModelAnswer
+    }
+
+    [Serializable]
+    public sealed class CreeiModelExampleSet
+    {
+        public string Claim = string.Empty;
+        public string Reason = string.Empty;
+        public string Evidence = string.Empty;
+        public string Explanation = string.Empty;
+        public string Impact = string.Empty;
+
+        public string GetText(CreeiComponent component) => component switch
+        {
+            CreeiComponent.Claim => Claim,
+            CreeiComponent.Reason => Reason,
+            CreeiComponent.Evidence => Evidence,
+            CreeiComponent.Explanation => Explanation,
+            CreeiComponent.Impact => Impact,
+            _ => string.Empty
+        };
     }
 
     [Serializable]
@@ -151,6 +172,7 @@ namespace Game.Debate
         public string FeedbackText = string.Empty;
         public string NextAction = "add evidence";
         public string TargetSuccessCriterion = string.Empty;
+        public CreeiModelExampleSet CreeiModelExamples = new();
         public CoachFeedbackSource Source = CoachFeedbackSource.Rules;
         public string RawJson = string.Empty;
         public string DebugInfo = string.Empty;

@@ -20,6 +20,8 @@ namespace Game.Debate
         private readonly Dictionary<CreeiComponent, TMP_InputField> _inputs = new();
         private readonly Dictionary<CreeiComponent, TMP_Text> _cardStates = new();
         private readonly Dictionary<CreeiComponent, Outline> _cardOutlines = new();
+        private readonly Dictionary<CreeiComponent, TMP_Text> _modelExamples = new();
+        private readonly Dictionary<CreeiComponent, LayoutElement> _cardLayouts = new();
         private readonly Dictionary<string, Button> _buttons = new(StringComparer.Ordinal);
         private readonly Dictionary<CoachWorkbenchAction, string> _actionButtonNames = new();
         private RectTransform _root;
@@ -80,7 +82,7 @@ namespace Game.Debate
             layout.childForceExpandHeight = false;
 
             AddText(root.transform, "PRACTICE 1 - CREEI WORKBENCH", 23, FontStyles.Bold);
-            _timer = AddText(root.transform, "Time remaining  10:00", 21, FontStyles.Bold);
+            _timer = AddText(root.transform, "Time remaining  12:00", 21, FontStyles.Bold);
             _topic = AddText(root.transform, string.Empty, 14, FontStyles.Bold);
             _topic.color = new Color(0.35f, 0.78f, 1f);
             _activeHint = AddText(root.transform,
@@ -139,6 +141,7 @@ namespace Game.Debate
 
         public void Hide()
         {
+            ClearCreeiModelExamples();
             if (_root != null) _root.gameObject.SetActive(false);
             if (_historyPanel != null) _historyPanel.SetActive(false);
             if (_historyToggle != null) _historyToggle.gameObject.SetActive(false);
@@ -162,6 +165,45 @@ namespace Game.Debate
             _suppressInputEvents = true;
             input.text = text ?? string.Empty;
             _suppressInputEvents = false;
+        }
+
+        public void ShowCreeiModelExamples(CreeiModelExampleSet examples)
+        {
+            foreach (CreeiComponent component in Enum.GetValues(typeof(CreeiComponent)))
+            {
+                if (!_modelExamples.TryGetValue(component, out TMP_Text label) ||
+                    label == null)
+                    continue;
+                string example = examples?.GetText(component)?.Trim() ?? string.Empty;
+                label.text = string.IsNullOrWhiteSpace(example)
+                    ? string.Empty
+                    : "Anna's example: " + example;
+                label.gameObject.SetActive(!string.IsNullOrWhiteSpace(example));
+                if (_cardLayouts.TryGetValue(component, out LayoutElement cardLayout) &&
+                    cardLayout != null)
+                {
+                    cardLayout.minHeight = string.IsNullOrWhiteSpace(example) ? 88f : 148f;
+                    cardLayout.preferredHeight =
+                        string.IsNullOrWhiteSpace(example) ? 88f : 148f;
+                }
+            }
+            Canvas.ForceUpdateCanvases();
+        }
+
+        public void ClearCreeiModelExamples()
+        {
+            foreach (KeyValuePair<CreeiComponent, TMP_Text> pair in _modelExamples)
+            {
+                if (pair.Value == null) continue;
+                pair.Value.text = string.Empty;
+                pair.Value.gameObject.SetActive(false);
+                if (_cardLayouts.TryGetValue(pair.Key, out LayoutElement cardLayout) &&
+                    cardLayout != null)
+                {
+                    cardLayout.minHeight = 88f;
+                    cardLayout.preferredHeight = 88f;
+                }
+            }
         }
 
         public void SetActiveComponent(CreeiComponent? component)
@@ -368,6 +410,7 @@ namespace Game.Debate
             LayoutElement cardElement = card.GetComponent<LayoutElement>();
             cardElement.minHeight = 88f;
             cardElement.preferredHeight = 88f;
+            _cardLayouts[component] = cardElement;
             VerticalLayoutGroup layout = card.GetComponent<VerticalLayoutGroup>();
             layout.padding = new RectOffset(9, 9, 4, 4);
             layout.spacing = 3f;
@@ -404,6 +447,19 @@ namespace Game.Debate
             stateLayout.preferredWidth = 86f;
             stateLayout.preferredHeight = 27f;
             _cardStates[component] = state;
+            TMP_Text modelExample = AddText(
+                card.transform,
+                string.Empty,
+                12,
+                FontStyles.Italic);
+            modelExample.gameObject.name = "CREEI Model Example " + component;
+            modelExample.color = new Color(0.65f, 0.9f, 1f);
+            modelExample.textWrappingMode = TextWrappingModes.Normal;
+            LayoutElement modelLayout = modelExample.GetComponent<LayoutElement>();
+            modelLayout.minHeight = 44f;
+            modelLayout.preferredHeight = 54f;
+            modelExample.gameObject.SetActive(false);
+            _modelExamples[component] = modelExample;
             TMP_InputField input = AddInput(card.transform, "CREEI Input " + component,
                 GetPlaceholder(component), true);
             input.onSelect.AddListener(_ => SelectComponentFromUser(component));
