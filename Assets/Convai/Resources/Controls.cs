@@ -296,17 +296,6 @@ public partial class @Controls: IInputActionCollection2, IDisposable
                 },
                 {
                     ""name"": """",
-                    ""id"": ""33c7b6d1-867b-4aca-9060-b8aea01e3721"",
-                    ""path"": ""<Keyboard>/f10"",
-                    ""interactions"": """",
-                    ""processors"": """",
-                    ""groups"": ""Keyboard & Mouse"",
-                    ""action"": ""ToggleSettings"",
-                    ""isComposite"": false,
-                    ""isPartOfComposite"": false
-                },
-                {
-                    ""name"": """",
                     ""id"": ""3416803c-a95a-41df-a64d-ae6cc8c2e64b"",
                     ""path"": ""<Keyboard>/escape"",
                     ""interactions"": """",

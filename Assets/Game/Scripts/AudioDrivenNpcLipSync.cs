@@ -12,6 +12,7 @@ namespace Game.Debate
         [SerializeField] private string talkParameter = "Talk";
         [SerializeField] private string jawOpenBlendShape = "jawOpen";
         [SerializeField, Min(0f)] private float mouthGain = 1.2f;
+        [SerializeField, Range(0f, 100f)] private float minimumSpeakingJawWeight = 0.15f;
         [SerializeField, Range(0f, 100f)] private float maximumJawWeight = 1.5f;
         [SerializeField, Min(0.1f)] private float mouthSmoothing = 18f;
 
@@ -39,8 +40,11 @@ namespace Game.Debate
             float targetWeight = 0f;
             if (isSpeaking)
             {
-                audioSource.GetOutputData(_audioSamples, 0);
-                targetWeight = Mathf.Clamp01(CalculateRms(_audioSamples) * mouthGain) * maximumJawWeight;
+                targetWeight = CalculateJawWeight(
+                    ReadCurrentRms(),
+                    mouthGain,
+                    minimumSpeakingJawWeight,
+                    maximumJawWeight);
             }
 
             float blend = 1f - Mathf.Exp(-mouthSmoothing * Time.deltaTime);
@@ -74,6 +78,35 @@ namespace Game.Debate
             }
 
             return Mathf.Sqrt(sum / samples.Length);
+        }
+
+        public static float CalculateJawWeight(
+            float rms,
+            float gain,
+            float minimumWeight,
+            float maximumWeight)
+        {
+            float safeMinimum = Mathf.Max(0f, minimumWeight);
+            float safeMaximum = Mathf.Max(safeMinimum, maximumWeight);
+            float normalizedAmplitude = Mathf.Clamp01(Mathf.Max(0f, rms) * Mathf.Max(0f, gain));
+            return Mathf.Lerp(safeMinimum, safeMaximum, normalizedAmplitude);
+        }
+
+        private float ReadCurrentRms()
+        {
+            AudioClip clip = audioSource != null ? audioSource.clip : null;
+            if (clip != null && clip.loadState == AudioDataLoadState.Loaded && clip.samples > 0)
+            {
+                int maxOffset = Mathf.Max(0, clip.samples - _audioSamples.Length);
+                int sampleOffset = Mathf.Clamp(audioSource.timeSamples, 0, maxOffset);
+                if (clip.GetData(_audioSamples, sampleOffset))
+                {
+                    return CalculateRms(_audioSamples);
+                }
+            }
+
+            audioSource?.GetOutputData(_audioSamples, 0);
+            return CalculateRms(_audioSamples);
         }
 
         private void ResolveReferences()

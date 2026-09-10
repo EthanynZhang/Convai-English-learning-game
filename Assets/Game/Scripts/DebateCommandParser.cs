@@ -19,7 +19,7 @@ namespace Game.Debate
         private const string ApiKeyPlayerPrefsKey = "DEBATE_OPENAI_API_KEY";
         private const string BaseUrlPlayerPrefsKey = "DEBATE_OPENAI_BASE_URL";
         private const string ProjectRelayEndpoint = "https://api.meding.site/v1/chat/completions";
-        private const string ProjectRelayApiKey = "sk-jp3lFBmZA8Jv7He2ulCkpJvQUsR2MkL1kCyvIopmNGGs40c8";
+        private const string ProjectRelayApiKey = "";
         private const string DefaultModel = "gpt-4o-mini";
 
         private readonly string _model;
@@ -140,8 +140,16 @@ namespace Game.Debate
             }
 
             string playerPrefsKey = PlayerPrefs.GetString(ApiKeyPlayerPrefsKey, string.Empty).Trim();
-            return !string.IsNullOrWhiteSpace(playerPrefsKey)
-                ? playerPrefsKey
+            if (!string.IsNullOrWhiteSpace(playerPrefsKey))
+            {
+                return playerPrefsKey;
+            }
+
+            InternalTestApiCredentials embeddedCredentials =
+                InternalTestApiCredentials.Load();
+            return embeddedCredentials != null &&
+                   !string.IsNullOrWhiteSpace(embeddedCredentials.DebateApiKey)
+                ? embeddedCredentials.DebateApiKey
                 : ProjectRelayApiKey;
         }
 
@@ -165,8 +173,16 @@ namespace Game.Debate
             }
 
             string playerPrefsBaseUrl = PlayerPrefs.GetString(BaseUrlPlayerPrefsKey, string.Empty).Trim();
-            return !string.IsNullOrWhiteSpace(playerPrefsBaseUrl)
-                ? playerPrefsBaseUrl
+            if (!string.IsNullOrWhiteSpace(playerPrefsBaseUrl))
+            {
+                return playerPrefsBaseUrl;
+            }
+
+            InternalTestApiCredentials embeddedCredentials =
+                InternalTestApiCredentials.Load();
+            return embeddedCredentials != null &&
+                   !string.IsNullOrWhiteSpace(embeddedCredentials.DebateBaseUrl)
+                ? embeddedCredentials.DebateBaseUrl
                 : ProjectRelayEndpoint;
         }
 

@@ -55,6 +55,7 @@ namespace Game.Tests.EditMode
                 NpcDebateLearningPhaseController controller = UnityEngine.Object.FindAnyObjectByType<NpcDebateLearningPhaseController>();
                 Assert.IsNotNull(controller, "The learning controller must exist in the NPC-vs-NPC scene.");
                 SetPrivateField(controller, "playNpcVoice", false);
+                InvokePrivate(controller, "BeginLearningFromStartGate");
                 AdvanceToStage(controller, "Micro Practice 2: Build Your CREEI Argument");
 
                 GameObject root = GetPrivateField<GameObject>(controller, "_root");
@@ -121,20 +122,22 @@ namespace Game.Tests.EditMode
                 StringAssert.Contains("Impact final.", csv);
                 StringAssert.Contains("true,1", csv);
 
-                NpcDebateRoundManager roundManager = UnityEngine.Object.FindAnyObjectByType<NpcDebateRoundManager>();
-                Assert.IsNotNull(roundManager);
+                Assert.IsNull(UnityEngine.Object.FindAnyObjectByType<NpcDebateRoundManager>());
                 for (int remaining = DebateLearningContent.StageSequence.Length; remaining > 0; remaining--)
                 {
-                    if (!GetPrivateField<GameObject>(controller, "_root").activeSelf)
+                    if (controller == null || !controller)
                     {
                         break;
                     }
 
+                    GameObject learningRoot = GetPrivateField<GameObject>(controller, "_root");
+                    if (learningRoot == null || !learningRoot.activeSelf) break;
+
                     InvokePrivate(controller, "AdvanceStage");
                 }
 
-                Assert.IsFalse(GetPrivateField<GameObject>(controller, "_root").activeSelf);
-                Assert.IsTrue(roundManager.IsRoundRunning, "The formal NPC debate must start after the learning flow.");
+                StringAssert.StartsWith("03Level_PlayerVsNPCDebate",
+                    SceneManager.GetActiveScene().name);
                 Assert.AreNotSame(controller, ConvaiGRPCAPI.TryHandleUserVoiceTranscript?.Target);
                 Assert.AreNotSame(controller, ConvaiInputManager.ShouldSuppressTalkInput?.Target);
                 Assert.AreNotSame(controller, ConvaiPlayerInteractionManager.ShouldSuppressTalkInput?.Target);

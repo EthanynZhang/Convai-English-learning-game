@@ -75,32 +75,29 @@ Topic: "Should students be allowed to use AI for homework?"
 
 ## API Configuration
 
-The following credentials are intentionally stored in this project at the project owner's request. Environment variables and PlayerPrefs still take precedence, so credentials can be replaced without changing source code.
+Credentials are intentionally excluded from source control. Configure them through environment variables, PlayerPrefs, local ignored assets, or CI build secrets.
 
 ### GPT Relay
 
 - Endpoint: `https://api.meding.site/v1/chat/completions`
 - Model: `gpt-4o-mini`
-- API key: `sk-jp3lFBmZA8Jv7He2ulCkpJvQUsR2MkL1kCyvIopmNGGs40c8`
-- Built-in fallback location: `Assets/Game/Scripts/DebateCommandParser.cs`
+- API key: not stored in the repository
 - Override environment variables: `DEBATE_OPENAI_API_KEY`, `OPENAI_API_KEY`, `DEBATE_OPENAI_BASE_URL`, `OPENAI_BASE_URL`
 - Override PlayerPrefs keys: `DEBATE_OPENAI_API_KEY`, `DEBATE_OPENAI_BASE_URL`
 
 ### iFlytek Realtime Speech Transcription
 
 - Endpoint: `wss://rtasr.xfyun.cn/v1/ws`
-- App ID: `309e7d3c`
-- API key: `739024599abf08cd804bafad624dc704`
+- App ID: not stored in the repository
+- API key: not stored in the repository
 - Recognition language: English (`lang=en`, `pd=edu`, `vadMdn=2`)
-- Built-in fallback location: `Assets/Game/Scripts/XfyunRealtimeTranscriber.cs`
 - Override environment variables: `XFYUN_RTASR_APP_ID`, `XFYUN_RTASR_API_KEY`
 - Override PlayerPrefs keys: `XFYUN_RTASR_APP_ID`, `XFYUN_RTASR_API_KEY`
 
 ### Convai
 
 - Service website: `https://api.convai.com`
-- API key: `14abc9fef8fdadfedee9c6187162fcd5`
-- Project asset: `Assets/Resources/ConvaiAPIKey.asset`
+- API key: stored only in the ignored local `Assets/Resources/ConvaiAPIKey.asset`
 - Used for NPC text-to-speech, voice delivery, character audio, lip sync, and NPC interaction.
 
 ### MiniMax TTS

@@ -44,7 +44,7 @@ namespace Convai.Scripts.Runtime.Core
         public KeyCode TextSendKey = KeyCode.Return;
         public KeyCode TextSendAltKey = KeyCode.KeypadEnter;
         public KeyCode TalkKey = KeyCode.T;
-        public KeyCode OpenSettingPanelKey = KeyCode.F10;
+        public KeyCode OpenSettingPanelKey = KeyCode.None;
         public KeyCode RunKey = KeyCode.LeftShift;
         public MovementKeys movementKeys;
         

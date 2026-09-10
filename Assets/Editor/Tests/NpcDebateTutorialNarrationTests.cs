@@ -58,8 +58,18 @@ namespace Game.Tests.EditMode
             Type clientType = typeof(DebateLearningContent).Assembly.GetType("Game.Debate.MiniMaxTtsClient");
             Assert.IsNotNull(clientType, "MiniMaxTtsClient must isolate HTTP, caching, and response parsing.");
 
-            MethodInfo buildRequest = clientType.GetMethod("BuildRequestJson", BindingFlags.Public | BindingFlags.Static);
-            MethodInfo computeCacheKey = clientType.GetMethod("ComputeCacheKey", BindingFlags.Public | BindingFlags.Static);
+            MethodInfo buildRequest = clientType.GetMethod(
+                "BuildRequestJson",
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { typeof(string) },
+                null);
+            MethodInfo computeCacheKey = clientType.GetMethod(
+                "ComputeCacheKey",
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { typeof(string) },
+                null);
             MethodInfo decodeAudio = clientType.GetMethod("TryDecodeAudioHex", BindingFlags.Public | BindingFlags.Static);
             Assert.IsNotNull(buildRequest);
             Assert.IsNotNull(computeCacheKey);
@@ -83,22 +93,119 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void MiniMaxClientSupportsDistinctFemaleAndGentleMaleVoices()
+        {
+            Type clientType = typeof(DebateLearningContent).Assembly.GetType("Game.Debate.MiniMaxTtsClient");
+            Assert.IsNotNull(clientType);
+
+            MethodInfo buildRequest = clientType.GetMethod(
+                "BuildRequestJson",
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { typeof(string), typeof(string) },
+                null);
+            MethodInfo computeCacheKey = clientType.GetMethod(
+                "ComputeCacheKey",
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { typeof(string), typeof(string) },
+                null);
+            Assert.IsNotNull(buildRequest);
+            Assert.IsNotNull(computeCacheKey);
+
+            const string transcript = "How does that evidence support your claim?";
+            string femaleVoice = (string)clientType.GetField("FemaleVoiceId")?.GetRawConstantValue();
+            string maleVoice = (string)clientType.GetField("MaleVoiceId")?.GetRawConstantValue();
+            Assert.AreEqual("English_Graceful_Lady", femaleVoice);
+            Assert.AreEqual("English_Gentle-voiced_man", maleVoice);
+
+            string maleJson = (string)buildRequest.Invoke(null, new object[] { transcript, maleVoice });
+            StringAssert.Contains("\"text\":\"" + transcript + "\"", maleJson);
+            StringAssert.Contains("\"voice_id\":\"English_Gentle-voiced_man\"", maleJson);
+
+            string femaleCache = (string)computeCacheKey.Invoke(null, new object[] { transcript, femaleVoice });
+            string maleCache = (string)computeCacheKey.Invoke(null, new object[] { transcript, maleVoice });
+            Assert.AreNotEqual(femaleCache, maleCache, "Male and female clips must never share a cache entry.");
+        }
+
+        [Test]
+        public void MiniMaxClientPrefersConfiguredKeysWithoutBundlingARepositorySecret()
+        {
+            Type clientType = typeof(DebateLearningContent).Assembly.GetType("Game.Debate.MiniMaxTtsClient");
+            Assert.IsNotNull(clientType);
+
+            MethodInfo selectApiKey = clientType.GetMethod(
+                "SelectApiKey",
+                BindingFlags.Public | BindingFlags.Static);
+            FieldInfo embeddedKeyField = clientType.GetField(
+                "EmbeddedInternalTestApiKey",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.IsNotNull(selectApiKey, "Key priority should be independently testable.");
+            Assert.IsNotNull(embeddedKeyField);
+
+            string embeddedKey = (string)embeddedKeyField.GetRawConstantValue();
+            Assert.IsEmpty(embeddedKey, "Repository source must not bundle a live API key.");
+
+            Assert.AreEqual(
+                "process-key",
+                selectApiKey.Invoke(null, new object[] { " process-key ", "user-key", embeddedKey }));
+            Assert.AreEqual(
+                "user-key",
+                selectApiKey.Invoke(null, new object[] { " ", " user-key ", embeddedKey }));
+            Assert.AreEqual(
+                string.Empty,
+                selectApiKey.Invoke(null, new object[] { null, null, embeddedKey }));
+        }
+
+        [Test]
+        public void DialogueDemoRoutesBothSpeakersThroughMiniMaxAndSharedLipSync()
+        {
+            string controllerSource = File.ReadAllText(Path.Combine(
+                "Assets", "Game", "Scripts", "NpcDebateLearningPhaseController.cs"));
+            string clientSource = File.ReadAllText(Path.Combine(
+                "Assets", "Game", "Scripts", "MiniMaxTtsClient.cs"));
+
+            StringAssert.Contains("PlayMiniMaxDialogueLine", controllerSource);
+            StringAssert.Contains("GetMiniMaxVoiceId(line)", controllerSource);
+            StringAssert.Contains("MiniMaxTtsClient.MaleVoiceId", controllerSource);
+            StringAssert.Contains("MiniMaxTtsClient.FemaleVoiceId", controllerSource);
+            StringAssert.DoesNotContain(
+                "voiceSeconds = PlayDialogueLine(CurrentStage.Key, i, line, speaker);",
+                controllerSource);
+            StringAssert.Contains("EnsureAudioLipSync(primaryDemoNPC);", controllerSource);
+            StringAssert.Contains("EnsureAudioLipSync(secondaryDemoNPC);", controllerSource);
+            StringAssert.Contains("EnsureAudioLipSync(speaker);", controllerSource);
+            StringAssert.Contains("EnvironmentVariableTarget.User", clientSource);
+        }
+
+        [Test]
         public void AudioDrivenLipSyncExposesRmsCalculationAndJawOpenDriver()
         {
             Type lipSyncType = typeof(DebateLearningContent).Assembly.GetType("Game.Debate.AudioDrivenNpcLipSync");
             Assert.IsNotNull(lipSyncType, "AudioDrivenNpcLipSync must animate external TTS audio.");
 
             MethodInfo calculateRms = lipSyncType.GetMethod("CalculateRms", BindingFlags.Public | BindingFlags.Static);
+            MethodInfo calculateJawWeight = lipSyncType.GetMethod(
+                "CalculateJawWeight",
+                BindingFlags.Public | BindingFlags.Static);
             Assert.IsNotNull(calculateRms);
+            Assert.IsNotNull(calculateJawWeight);
             float rms = (float)calculateRms.Invoke(null, new object[] { new[] { 0.5f, -0.5f, 0.5f, -0.5f } });
             Assert.AreEqual(0.5f, rms, 0.0001f);
+            float quietJaw = (float)calculateJawWeight.Invoke(null, new object[] { 0f, 1.2f, 0.15f, 1.5f });
+            float loudJaw = (float)calculateJawWeight.Invoke(null, new object[] { 1f, 1.2f, 0.15f, 1.5f });
+            Assert.AreEqual(0.15f, quietJaw, 0.0001f);
+            Assert.AreEqual(1.5f, loudJaw, 0.0001f);
 
             string source = File.ReadAllText(Path.Combine("Assets", "Game", "Scripts", "AudioDrivenNpcLipSync.cs"));
             StringAssert.Contains("GetOutputData", source);
+            StringAssert.Contains("clip.GetData", source);
             StringAssert.Contains("jawOpen", source);
             StringAssert.Contains("SetBlendShapeWeight", source);
             StringAssert.Contains("SetBool(talkParameter", source);
             StringAssert.Contains("mouthGain = 1.2f", source);
+            StringAssert.Contains("minimumSpeakingJawWeight = 0.15f", source);
             StringAssert.Contains("maximumJawWeight = 1.5f", source);
         }
 
@@ -148,13 +255,14 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void AnnaDialogueUsesTheSameMiniMaxVoiceAsStageNarration()
+        public void DialogueUsesTheSameMiniMaxPipelineAsStageNarration()
         {
             string source = File.ReadAllText(Path.Combine(
                 "Assets", "Game", "Scripts", "NpcDebateLearningPhaseController.cs"));
 
-            StringAssert.Contains("PlayAnnaDialogueLineWithStageVoice", source);
+            StringAssert.Contains("PlayMiniMaxDialogueLine", source);
             StringAssert.Contains("_miniMaxTtsClient.RequestClip", source);
+            StringAssert.Contains("line.Text", source);
             StringAssert.Contains("PlayAudioClipOnNpc(generatedClip, speaker, true)", source);
         }
 
@@ -195,9 +303,9 @@ namespace Game.Tests.EditMode
             string[] sceneFiles =
             {
                 "01Level_NPCVsNPCDebate.unity",
-                "02Level_InteractiveNPCDebate 1.unity",
                 "03Level_PlayerVsNPCDebate.unity",
-                "04 coach Agent.unity"
+                "04 coach Agent.unity",
+                "05Level_PlayerVsNPCDebate 1.unity"
             };
 
             foreach (string sceneFile in sceneFiles)
@@ -210,8 +318,9 @@ namespace Game.Tests.EditMode
             string pauseMenu = File.ReadAllText(Path.Combine("Assets", "Game", "Scripts", "DebatePauseMenu.cs"));
             StringAssert.Contains("03Level_PlayerVsNPCDebate", pauseMenu);
             StringAssert.Contains("01Level_NPCVsNPCDebate", pauseMenu);
-            StringAssert.Contains("02Level_InteractiveNPCDebate 1", pauseMenu);
             StringAssert.Contains("04 coach Agent", pauseMenu);
+            StringAssert.Contains("05Level_PlayerVsNPCDebate 1", pauseMenu);
+            StringAssert.DoesNotContain("02Level_InteractiveNPCDebate 1", pauseMenu);
 
             string buildSettings = File.ReadAllText(Path.Combine("ProjectSettings", "EditorBuildSettings.asset"));
             foreach (string sceneFile in sceneFiles)
@@ -221,7 +330,7 @@ namespace Game.Tests.EditMode
 
             StringAssert.DoesNotContain("Assets/Game/Scenes/backup/Level_InteractiveNPCDebate.unity", buildSettings);
             StringAssert.DoesNotContain("Assets/Game/Scenes/Level_SharedInitiativeOrchestration.unity", buildSettings);
-            StringAssert.DoesNotContain("Assets/Game/Scenes/05Level_PlayerVsNPCDebate 1.unity", buildSettings);
+            StringAssert.Contains("Assets/Game/Scenes/05Level_PlayerVsNPCDebate 1.unity", buildSettings);
         }
 
         [Test]
@@ -244,6 +353,103 @@ namespace Game.Tests.EditMode
                 "ConvaiGRPCAPI.ShouldSuppressVoiceResponse = ShouldSuppressTutorialVoiceResponse",
                 controllerSource);
             StringAssert.Contains("SilenceConvaiAgentResponse(primaryDemoNPC)", controllerSource);
+        }
+
+        [Test]
+        public void TutorialVoicePracticeUsesXfyunInsteadOfConvaiListening()
+        {
+            string controllerSource = File.ReadAllText(Path.Combine(
+                "Assets", "Game", "Scripts", "NpcDebateLearningPhaseController.cs"));
+
+            StringAssert.Contains("XfyunRealtimeTranscriber realtimeTranscriber", controllerSource);
+            StringAssert.Contains("EnsureRealtimeTranscriber", controllerSource);
+            StringAssert.Contains("SubscribeToRealtimeTranscriber", controllerSource);
+            StringAssert.Contains("SessionStarted += HandleVoicePracticeSessionStarted", controllerSource);
+            StringAssert.Contains("TranscriptUpdated += HandleVoicePracticeTranscriptUpdated", controllerSource);
+            StringAssert.Contains("SessionCompleted += HandleVoicePracticeSessionCompleted", controllerSource);
+            StringAssert.Contains("SessionFailed += HandleVoicePracticeSessionFailed", controllerSource);
+            StringAssert.Contains("realtimeTranscriber.StartSession", controllerSource);
+            StringAssert.Contains("realtimeTranscriber?.StopSession", controllerSource);
+            StringAssert.Contains("TryHandleVoicePracticeTranscript(transcript)", controllerSource);
+            StringAssert.DoesNotContain("primaryDemoNPC.StartListening()", controllerSource);
+            StringAssert.DoesNotContain("primaryDemoNPC?.StopListening()", controllerSource);
+        }
+
+        [Test]
+        public void VoicePracticeNarratesEveryCreeiStepInsteadOfOnlyTheStageIntroduction()
+        {
+            string controllerSource = File.ReadAllText(Path.Combine(
+                "Assets", "Game", "Scripts", "NpcDebateLearningPhaseController.cs"));
+
+            StringAssert.Contains("private void BeginVoicePracticePromptNarration()", controllerSource);
+            StringAssert.Contains("PlayVoicePracticePromptNarration", controllerSource);
+            StringAssert.Contains("BeginVoicePracticePromptNarration();", controllerSource);
+            StringAssert.Contains("prompt.Prompt", controllerSource);
+            StringAssert.Contains("prompt.Example", controllerSource);
+            StringAssert.Contains(
+                "return _stageNarrationInProgress || _voicePracticeConnecting ||",
+                controllerSource);
+        }
+
+        [Test]
+        public void SpotMissingMicroPracticePageIsRemovedFromTheTutorialSequence()
+        {
+            CollectionAssert.DoesNotContain(
+                DebateLearningContent.StageSequence.Select(stage => stage.Key).ToArray(),
+                DebateLearningStageKey.MicroPracticeSpotMissing);
+            Assert.IsFalse(DebateLearningContent.StageSequence.Any(stage =>
+                stage.Title.Contains("Micro Practice 1", StringComparison.OrdinalIgnoreCase)));
+        }
+
+        [Test]
+        public void TranscriptGuidePointsToF5SceneMenuAndDisablesConvaiSettingsShortcut()
+        {
+            string[] transcriptPrefabs =
+            {
+                "Convai Transcript Canvas - Subtitle.prefab",
+                "Convai Transcript Canvas - QA.prefab",
+                "Convai Transcript Canvas - Chat.prefab"
+            };
+
+            foreach (string prefabName in transcriptPrefabs)
+            {
+                string prefab = File.ReadAllText(Path.Combine(
+                    "Assets", "Convai", "Prefabs", "Transcript UI Canvases", "Default", prefabName));
+                StringAssert.Contains("m_text: Scene Menu [F05]", prefab, prefabName);
+                StringAssert.DoesNotContain("Settings [F10]", prefab, prefabName);
+            }
+
+            string inputPrefab = File.ReadAllText(Path.Combine(
+                "Assets", "Convai", "Prefabs", "Utils", "Convai Input Manager.prefab"));
+            int settingsAction = inputPrefab.IndexOf("SettingsKeyAction:", StringComparison.Ordinal);
+            Assert.GreaterOrEqual(settingsAction, 0);
+            string settingsSection = inputPrefab.Substring(settingsAction);
+            StringAssert.Contains("m_SingletonActionBindings: []", settingsSection);
+            StringAssert.DoesNotContain("m_Path: <Keyboard>/f5", settingsSection);
+            StringAssert.DoesNotContain("m_Path: <Keyboard>/f10", inputPrefab);
+
+            string inputManagerSource = File.ReadAllText(Path.Combine(
+                "Assets", "Convai", "Scripts", "Runtime", "Core", "ConvaiInputManager.cs"));
+            StringAssert.Contains("OpenSettingPanelKey = KeyCode.None", inputManagerSource);
+            StringAssert.DoesNotContain("OpenSettingPanelKey = KeyCode.F10", inputManagerSource);
+
+            string inputActions = File.ReadAllText(Path.Combine(
+                "Assets", "Convai", "Resources", "Controls.inputactions"));
+            string generatedControls = File.ReadAllText(Path.Combine(
+                "Assets", "Convai", "Resources", "Controls.cs"));
+            StringAssert.DoesNotContain("<Keyboard>/f10", inputActions);
+            StringAssert.DoesNotContain("<Keyboard>/f10", generatedControls);
+
+            string sceneMenuSource = File.ReadAllText(Path.Combine(
+                "Assets", "Game", "Scripts", "DebugSceneJumpMenu.cs"));
+            StringAssert.Contains("STUDY SCENE MENU", sceneMenuSource);
+            StringAssert.Contains("WasF5Pressed", sceneMenuSource);
+            StringAssert.Contains("WasEscapePressed", sceneMenuSource);
+            StringAssert.Contains("Press F5 or Esc to close", sceneMenuSource);
+            StringAssert.Contains("Exit Application", sceneMenuSource);
+            StringAssert.Contains("Application.Quit()", sceneMenuSource);
+            StringAssert.DoesNotContain("DEBUG SCENE JUMP", sceneMenuSource);
+            StringAssert.DoesNotContain("bypass formal research", sceneMenuSource);
         }
     }
 }

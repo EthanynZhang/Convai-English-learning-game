@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using Convai.Scripts.Runtime.Features;
 using TMPro;
@@ -47,6 +48,12 @@ namespace Game.Debate
         [SerializeField] private TMP_Text timerText;
         [SerializeField] private string timerPrefix = "Time Left ";
 
+        [Header("Speech Bubbles")]
+        [SerializeField] private Color speechBubbleBackgroundColor = new(0.08f, 0.08f, 0.08f, 0.72f);
+        [SerializeField] private Color speechBubbleTextColor = new(0.96f, 0.97f, 0.98f, 1f);
+        [SerializeField] private float speechBubbleLocalHeight = 2f;
+        [SerializeField] private Vector2 speechBubbleSize = new(40f, 16f);
+
         [Header("NPC Debate")]
         [SerializeField] private NPC2NPCConversationManager conversationManager;
         [SerializeField] private ConvaiGroupNPCController firstSpeaker;
@@ -57,15 +64,19 @@ namespace Game.Debate
             "The debate topic is: {0} You are the first speaker. Argue that reading is more important in learning English. Present your opening argument in under 20 seconds, then wait for the other NPC to respond.";
 
         private Coroutine _roundRoutine;
+        private Coroutine _speechBubbleStyleRoutine;
         private float _remainingSeconds;
+        private bool _roundCompletionRaised;
 
         public bool IsRoundRunning { get; private set; }
         public bool HasRoundEnded { get; private set; }
         public bool WaitForExternalStart => waitForExternalStart;
         public bool UseRoundTimer => useRoundTimer;
+        public event Action RoundCompleted;
 
         private void Start()
         {
+            _speechBubbleStyleRoutine = StartCoroutine(ConfigureSpeechBubbleBackgrounds());
             HideRefereeCaption();
             SetTimerVisible(useRoundTimer);
             if (useRoundTimer)
@@ -107,11 +118,17 @@ namespace Game.Debate
 
             SetStartButtonVisible(false);
             SetWaitingForStartCursor(false);
+            if (_speechBubbleStyleRoutine != null)
+            {
+                StopCoroutine(_speechBubbleStyleRoutine);
+            }
+            _speechBubbleStyleRoutine = StartCoroutine(ConfigureSpeechBubbleBackgrounds());
             if (_roundRoutine != null)
             {
                 StopCoroutine(_roundRoutine);
             }
 
+            _roundCompletionRaised = false;
             _roundRoutine = StartCoroutine(RunRound());
         }
 
@@ -135,10 +152,14 @@ namespace Game.Debate
 
             if (!useRoundTimer)
             {
-                while (true)
+                HideRefereeCaption();
+
+                while (IsRoundRunning)
                 {
                     yield return null;
                 }
+
+                yield break;
             }
 
             while (_remainingSeconds > 0f)
@@ -162,6 +183,7 @@ namespace Game.Debate
 
             yield return new WaitForSeconds(GetCaptionDelay(closingCaptionSeconds, refereeClosingClip));
             HideRefereeCaption();
+            RaiseRoundCompleted();
         }
 
         private void StartNpcOpening()
@@ -185,6 +207,94 @@ namespace Game.Debate
             }
 
             StartCoroutine(SendFirstSpeakerPrompt());
+        }
+
+        private void RaiseRoundCompleted()
+        {
+            if (_roundCompletionRaised)
+            {
+                return;
+            }
+
+            _roundCompletionRaised = true;
+            RoundCompleted?.Invoke();
+        }
+
+
+        private IEnumerator ConfigureSpeechBubbleBackgrounds()
+        {
+            const int maximumFrames = 60;
+            for (int frame = 0; frame < maximumFrames; frame++)
+            {
+                int expected = 0;
+                int styled = 0;
+                if (conversationManager != null)
+                {
+                    foreach (NPCGroup group in conversationManager.npcGroups)
+                    {
+                        if (group == null)
+                        {
+                            continue;
+                        }
+
+                        expected += CountAssignedNpc(group.GroupNPC1) + CountAssignedNpc(group.GroupNPC2);
+                        styled += ConfigureSpeechBubbleBackground(group.GroupNPC1);
+                        styled += ConfigureSpeechBubbleBackground(group.GroupNPC2);
+                    }
+                }
+
+                if (expected > 0 && styled >= expected)
+                {
+                    _speechBubbleStyleRoutine = null;
+                    yield break;
+                }
+
+                yield return null;
+            }
+
+            _speechBubbleStyleRoutine = null;
+        }
+
+        private static int CountAssignedNpc(ConvaiGroupNPCController npc)
+        {
+            return npc == null ? 0 : 1;
+        }
+
+        private int ConfigureSpeechBubbleBackground(ConvaiGroupNPCController npc)
+        {
+            if (npc == null)
+            {
+                return 0;
+            }
+
+            NPCSpeechBubble bubble = npc.GetComponentInChildren<NPCSpeechBubble>(true);
+            if (bubble == null)
+            {
+                return 0;
+            }
+
+            UnityEngine.UI.Image background = bubble.GetComponent<UnityEngine.UI.Image>();
+            if (background != null)
+            {
+                background.color = speechBubbleBackgroundColor;
+            }
+
+            RectTransform bubbleRect = bubble.GetComponent<RectTransform>();
+            if (bubbleRect != null)
+            {
+                bubbleRect.sizeDelta = speechBubbleSize;
+                Vector3 localPosition = bubbleRect.localPosition;
+                localPosition.y = speechBubbleLocalHeight;
+                bubbleRect.localPosition = localPosition;
+            }
+
+            TMP_Text text = bubble.GetComponentInChildren<TMP_Text>(true);
+            if (text != null)
+            {
+                text.color = speechBubbleTextColor;
+            }
+
+            return 1;
         }
 
         private void SetStartButtonVisible(bool visible)

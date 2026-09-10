@@ -47,6 +47,71 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void LearningSessionIdUsesTimestampAndStableEntropy()
+        {
+            DateTime timestamp = new(2026, 7, 18, 9, 30, 15, DateTimeKind.Utc);
+            Type sessionIdType = typeof(DebateLearningLogger).Assembly.GetType(
+                "Game.Debate.DebateLearningSessionId");
+            Assert.IsNotNull(sessionIdType);
+            MethodInfo create = sessionIdType.GetMethod(
+                "Create",
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { typeof(DateTime), typeof(string) },
+                null);
+            Assert.IsNotNull(create);
+
+            string sessionId = (string)create.Invoke(null, new object[] { timestamp, "abc123deadbeef" });
+
+            Assert.AreEqual("DL-20260718-093015-ABC123", sessionId);
+        }
+
+        [Test]
+        public void LearningLoggerRecordsSessionIdFromStartThroughStageEvents()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "debate-session-" + Guid.NewGuid().ToString("N") + ".csv");
+            try
+            {
+                DebateLearningLogger logger = new(path);
+                DebateLearningMetrics metrics = new();
+                const string sessionId = "DL-20260718-093015-ABC123";
+                MethodInfo logSessionStart = typeof(DebateLearningLogger).GetMethod(
+                    "LogSessionStart",
+                    BindingFlags.Public | BindingFlags.Instance);
+                Assert.IsNotNull(logSessionStart);
+
+                logSessionStart.Invoke(logger, new object[] { "P_TEST", "npc_vs_npc", sessionId, metrics });
+                MethodInfo logStageWithSession = typeof(DebateLearningLogger).GetMethod(
+                    "LogStage",
+                    BindingFlags.Public | BindingFlags.Instance,
+                    null,
+                    new[]
+                    {
+                        typeof(string), typeof(string), typeof(string),
+                        typeof(DebateLearningMetrics), typeof(string)
+                    },
+                    null);
+                Assert.IsNotNull(logStageWithSession);
+                logStageWithSession.Invoke(
+                    logger,
+                    new object[] { "P_TEST", "npc_vs_npc", "Warm-up", metrics, sessionId });
+
+                string csv = File.ReadAllText(path);
+                StringAssert.Contains("learning_session_id", csv);
+                StringAssert.Contains("learning_started", csv);
+                StringAssert.Contains("Warm-up", csv);
+                Assert.AreEqual(2, csv.Split(new[] { sessionId }, StringSplitOptions.None).Length - 1);
+            }
+            finally
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+        }
+
+        [Test]
         public void VoicePracticeContentDefinesFiveOrderedPromptsAndSpeakingFirstTopic()
         {
             Type promptType = typeof(DebateLearningContent).Assembly.GetType("Game.Debate.CreeiVoicePracticePrompt");
@@ -65,6 +130,23 @@ namespace Game.Tests.EditMode
             StringAssert.Contains("Reading and speaking", DebateLearningContent.OneSentenceTryText);
             StringAssert.Contains("Speaking is more important", DebateLearningContent.CreeiVoicePracticePrompts[0].Prompt);
             Assert.AreEqual(240f, DebateLearningContent.OneSentencePracticeSeconds, 0.001f);
+        }
+
+        [Test]
+        public void VoicePracticeProvidesOneShortBeginnerExampleForEveryCreeiPart()
+        {
+            object[] prompts = DebateLearningContent.CreeiVoicePracticePrompts.Cast<object>().ToArray();
+
+            Assert.AreEqual(5, prompts.Length);
+            foreach (object prompt in prompts)
+            {
+                string example = ReadProperty<string>(prompt, "Example");
+                StringAssert.StartsWith("For example:", example);
+                Assert.LessOrEqual(
+                    example.Count(character => character == '.'),
+                    2,
+                    ReadProperty<string>(prompt, "Title") + " example should stay within two short sentences.");
+            }
         }
 
         [Test]
@@ -160,13 +242,12 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void LearningPhaseOrderIsLinearAndEndsWithStartDebate()
+        public void LearningPhaseOrderIsLinearAndEndsWithTransitionToBaseline()
         {
             DebateLearningStageKey[] expected =
             {
                 DebateLearningStageKey.WarmUp,
                 DebateLearningStageKey.CreeiReading,
-                DebateLearningStageKey.MicroPracticeSpotMissing,
                 DebateLearningStageKey.CreeiDialogueDemo,
                 DebateLearningStageKey.CreeiStructureStudy,
                 DebateLearningStageKey.MicroPracticeOneSentence,
@@ -176,8 +257,7 @@ namespace Game.Tests.EditMode
                 DebateLearningStageKey.PathosDialogueDemo,
                 DebateLearningStageKey.MicroPracticeStrategyTry,
                 DebateLearningStageKey.MicroChoice,
-                DebateLearningStageKey.BufferTransition,
-                DebateLearningStageKey.StartDebate
+                DebateLearningStageKey.BufferTransition
             };
 
             CollectionAssert.AreEqual(expected, DebateLearningContent.StageSequence.Select(stage => stage.Key).ToArray());
@@ -231,6 +311,31 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void StrategyPagesUsePlainDefinitionsAndConcreteSixLineDebates()
+        {
+            StringAssert.Contains("Logos means logic", DebateLearningContent.StrategyReadingText);
+            StringAssert.Contains("Ethos means credibility", DebateLearningContent.StrategyReadingText);
+            StringAssert.Contains("Pathos means emotion", DebateLearningContent.StrategyReadingText);
+
+            foreach (DemoDialogueLine[] dialogue in new[]
+                     {
+                         DebateLearningContent.LogosDialogueLines,
+                         DebateLearningContent.EthosDialogueLines,
+                         DebateLearningContent.PathosDialogueLines
+                     })
+            {
+                Assert.AreEqual(6, dialogue.Length);
+                CollectionAssert.AreEquivalent(
+                    new[] { "Anna", "Mike" },
+                    dialogue.Select(line => line.SpeakerId).Distinct().ToArray());
+                Assert.IsTrue(dialogue.Any(line => line.Text.Contains("?")),
+                    "Each example must include a genuine challenge rather than a one-sided definition.");
+                Assert.IsTrue(dialogue.Last().Text.StartsWith("That is", StringComparison.Ordinal),
+                    "Each debate should end by identifying how the strategy worked.");
+            }
+        }
+
+        [Test]
         public void RepeatExactlyPromptFramesDemoLineAsScriptNotQuestion()
         {
             const string line = "What is your reason? Speaking practice also matters.";
@@ -261,6 +366,9 @@ namespace Game.Tests.EditMode
             StringAssert.Contains("\"Learning Keyboard Hint\"", source);
             StringAssert.Contains("\"Previous\"", source);
             StringAssert.Contains("\"Next / Confirm\"", source);
+            StringAssert.Contains("\"Replay Demo\"", source);
+            StringAssert.Contains("\"\\u2191\"", source);
+            StringAssert.Contains("_replayKeyboardHint.SetActive(isDemo)", source);
             StringAssert.Contains("CreateRect(\"Key Glyph\", keycap.transform)", source);
             StringAssert.Contains("rootLayout.preferredHeight = 96f;", source);
             StringAssert.Contains("keycapSize.preferredWidth = 88f;", source);
@@ -270,15 +378,116 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
+        public void LearningControllerSuppressesHeadBubblesAndSkipsTheRemovedMockDebate()
+        {
+            string source = ReadLearningControllerSource();
+
+            StringAssert.Contains("DisableNpcHeadBubbles", source);
+            StringAssert.Contains("GetComponentsInChildren<NPCSpeechBubble>(true)", source);
+            StringAssert.Contains("bubble.gameObject.SetActive(false)", source);
+            StringAssert.Contains("npc.DetachSpeechBubble()", source);
+            StringAssert.Contains("ResearchStudyFlowNavigator.TryLoadNextScene(\"01\")", source);
+            StringAssert.DoesNotContain("roundManager?.BeginRound()", source);
+        }
+
+        [Test]
+        public void Scene01ContainsNoLegacyRoundUiOrStructuredDebateController()
+        {
+            string scene = File.ReadAllText(Path.Combine(
+                "Assets", "Game", "Scenes", "01Level_NPCVsNPCDebate.unity"));
+
+            StringAssert.DoesNotContain(
+                "Assembly-CSharp::Game.Debate.NpcDebateRoundManager", scene);
+            StringAssert.DoesNotContain("m_Name: Debate Round UI", scene);
+            StringAssert.DoesNotContain("m_Name: Start Debate Button", scene);
+            StringAssert.DoesNotContain("m_Name: Round Timer", scene);
+            StringAssert.DoesNotContain("m_text: Time Left 03:00", scene);
+            StringAssert.DoesNotContain("useStructuredSixTurnDebate:", scene);
+        }
+
+        [Test]
+        public void LearningControllerHasNoRoundManagerDependency()
+        {
+            string source = ReadLearningControllerSource();
+
+            StringAssert.DoesNotContain("NpcDebateRoundManager", source);
+            StringAssert.DoesNotContain("roundManager", source);
+        }
+
+        [Test]
+        public void LearningControllerLocksTheCursorAfterSetupAndLimitsUiRaycastsToUiMode()
+        {
+            string source = ReadLearningControllerSource();
+            int beginIndex = source.IndexOf(
+                "private void BeginLearningFromStartGate()", StringComparison.Ordinal);
+            int nextMethodIndex = source.IndexOf(
+                "private void CreateResearchConditionButton", beginIndex, StringComparison.Ordinal);
+
+            Assert.GreaterOrEqual(beginIndex, 0);
+            Assert.Greater(nextMethodIndex, beginIndex);
+            string beginMethod = source.Substring(beginIndex, nextMethodIndex - beginIndex);
+            StringAssert.Contains("SetLearningCursor(false);", beginMethod);
+            StringAssert.Contains("_learningGraphicRaycaster", source);
+            StringAssert.Contains("_learningGraphicRaycaster.enabled = visible;", source);
+            StringAssert.Contains("panelImage.raycastTarget = false;", source);
+        }
+
+        [Test]
+        public void StructuredSixTurnRuntimeTypesHaveBeenRemoved()
+        {
+            Type runtimeAssemblyMarker = typeof(NpcDebateRoundManager);
+
+            Assert.IsNull(runtimeAssemblyMarker.Assembly.GetType(
+                "Game.Debate.StructuredNpcDebatePlan"));
+            Assert.IsNull(runtimeAssemblyMarker.Assembly.GetType(
+                "Game.Debate.ScreenDebateSubtitleController"));
+
+            string roundManagerSource = File.ReadAllText(Path.Combine(
+                "Assets", "Game", "Scripts", "NpcDebateRoundManager.cs"));
+            StringAssert.DoesNotContain("useStructuredSixTurnDebate", roundManagerSource);
+            StringAssert.DoesNotContain("ShowStructuredTurnStatus", roundManagerSource);
+        }
+
+        [Test]
+        public void LearningControllerRepeatedlySuppressesLateCreatedConvaiHeadBubbles()
+        {
+            string source = ReadLearningControllerSource();
+
+            StringAssert.Contains("private void SuppressNpcHeadBubbles()", source);
+            Assert.GreaterOrEqual(
+                source.Split(new[] { "SuppressNpcHeadBubbles();" }, StringSplitOptions.None).Length - 1,
+                3,
+                "Bubble suppression must run during Awake, Start, and Update because Convai creates its clone late.");
+        }
+
+        [Test]
+        public void LearningControllerWaitsAtExplicitStartGateAndLogsAssignedSession()
+        {
+            string source = ReadLearningControllerSource();
+            string scene = File.ReadAllText(Path.Combine(
+                "Assets", "Game", "Scenes", "01Level_NPCVsNPCDebate.unity"));
+
+            StringAssert.Contains("waitForLearningStart", source);
+            StringAssert.Contains("\"Debate Learning Start Gate\"", source);
+            StringAssert.Contains("\"Start Debate Learning\"", source);
+            StringAssert.Contains("BeginLearningFromStartGate", source);
+            StringAssert.Contains("HandleStartGateKeyboardInput", source);
+            StringAssert.Contains("_logger.LogSessionStart", source);
+            StringAssert.Contains("return enabled && !_completed;", source);
+            StringAssert.Contains("waitForLearningStart: 1", scene);
+        }
+
+        [Test]
         public void LearningControllerIsolatesOrdinaryConvaiConversationForEntireTutorial()
         {
             string source = ReadLearningControllerSource();
 
             StringAssert.Contains("RegisterTutorialInputIsolation();", source);
-            StringAssert.Contains("ConvaiGRPCAPI.TryHandleUserVoiceTranscript = TryHandleTutorialVoiceTranscript;", source);
+            StringAssert.DoesNotContain("ConvaiGRPCAPI.TryHandleUserVoiceTranscript =", source);
+            StringAssert.Contains("XfyunRealtimeTranscriber realtimeTranscriber", source);
             StringAssert.Contains("ConvaiPlayerInteractionManager.TryHandleTextSubmission = TryHandleTutorialTextSubmission;", source);
             StringAssert.Contains("ConvaiInputManager.ShouldSuppressTalkInput = ShouldSuppressTutorialTalkInput;", source);
-            StringAssert.Contains("return enabled && _started && !_completed;", source);
+            StringAssert.Contains("return enabled && !_completed;", source);
             StringAssert.Contains("UnregisterTutorialInputIsolation();", source);
         }
 

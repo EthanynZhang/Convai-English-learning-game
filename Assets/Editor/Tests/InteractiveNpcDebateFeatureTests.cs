@@ -3,6 +3,10 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using System.IO;
+using System;
+using System.Linq;
+using System.Reflection;
+using Object = UnityEngine.Object;
 
 namespace Game.Tests.EditMode
 {

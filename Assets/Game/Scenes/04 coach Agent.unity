@@ -585,11 +585,15 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3214018196952134044, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
       propertyPath: characterID
-      value: e077d61a-5b2c-11f1-842e-42010a7be02e
+      value: 6cb661fe-8342-11f1-a451-42010a7be02f
       objectReference: {fileID: 0}
     - target: {fileID: 3214018196952134044, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
       propertyPath: characterName
       value: Coach
+      objectReference: {fileID: 0}
+    - target: {fileID: 4338008761042009451, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
+      propertyPath: m_Enabled
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4338008761042009451, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
       propertyPath: conversationDistanceThreshold
@@ -601,7 +605,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 7050176741382542725, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
       propertyPath: m_LocalPosition.x
-      value: -1.2610979
+      value: 1.1
       objectReference: {fileID: 0}
     - target: {fileID: 7050176741382542725, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
       propertyPath: m_LocalPosition.y
@@ -609,11 +613,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 7050176741382542725, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 2.3295326
+      value: 2.33
       objectReference: {fileID: 0}
     - target: {fileID: 7050176741382542725, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
       propertyPath: m_LocalRotation.w
-      value: 0.6962441
+      value: -0.14359687
       objectReference: {fileID: 0}
     - target: {fileID: 7050176741382542725, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
       propertyPath: m_LocalRotation.x
@@ -621,7 +625,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 7050176741382542725, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
       propertyPath: m_LocalRotation.y
-      value: 0.71780515
+      value: 0.9896363
       objectReference: {fileID: 0}
     - target: {fileID: 7050176741382542725, guid: b34c3da86c337d04eb1aafa9a27e8d39, type: 3}
       propertyPath: m_LocalRotation.z
@@ -655,7 +659,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 269995627}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 0}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 74d3f2dd15d074a429eeea8c31f80b13, type: 3}
   m_Name: 
@@ -1149,7 +1153,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &597471345
 RectTransform:
   m_ObjectHideFlags: 0
@@ -1441,9 +1445,11 @@ GameObject:
   - component: {fileID: 763742167}
   - component: {fileID: 763742166}
   - component: {fileID: 763742168}
-  - component: {fileID: 8800100001}
   - component: {fileID: 8800100002}
   - component: {fileID: 8800100003}
+  - component: {fileID: 8800100008}
+  - component: {fileID: 8800100007}
+  - component: {fileID: 8800100006}
   m_Layer: 0
   m_Name: Debate Round System
   m_TagString: Untagged
@@ -1483,6 +1489,10 @@ MonoBehaviour:
   waitForExternalStart: 0
   timerText: {fileID: 1186777323}
   timerPrefix: 'Time Left '
+  speechBubbleBackgroundColor: {r: 0.08, g: 0.08, b: 0.08, a: 0.72}
+  speechBubbleTextColor: {r: 0.96, g: 0.97, b: 0.98, a: 1}
+  speechBubbleLocalHeight: 2
+  speechBubbleSize: {x: 40, y: 16}
   conversationManager: {fileID: 1297513123}
   firstSpeaker: {fileID: 269995629}
   firstSpeakerDelaySeconds: 0.5
@@ -1687,7 +1697,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 611602841913923752, guid: cc9605b0d2902a849aeab83a50df8bdd, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 1.2489142
+      value: -0.25
       objectReference: {fileID: 0}
     - target: {fileID: 611602841913923752, guid: cc9605b0d2902a849aeab83a50df8bdd, type: 3}
       propertyPath: m_LocalPosition.y
@@ -1695,11 +1705,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 611602841913923752, guid: cc9605b0d2902a849aeab83a50df8bdd, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 2.3520703
+      value: 2.5
       objectReference: {fileID: 0}
     - target: {fileID: 611602841913923752, guid: cc9605b0d2902a849aeab83a50df8bdd, type: 3}
       propertyPath: m_LocalRotation.w
-      value: -0.7078505
+      value: 0.109116785
       objectReference: {fileID: 0}
     - target: {fileID: 611602841913923752, guid: cc9605b0d2902a849aeab83a50df8bdd, type: 3}
       propertyPath: m_LocalRotation.x
@@ -1707,7 +1717,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 611602841913923752, guid: cc9605b0d2902a849aeab83a50df8bdd, type: 3}
       propertyPath: m_LocalRotation.y
-      value: 0.70636237
+      value: 0.994029
       objectReference: {fileID: 0}
     - target: {fileID: 611602841913923752, guid: cc9605b0d2902a849aeab83a50df8bdd, type: 3}
       propertyPath: m_LocalRotation.z
@@ -1729,13 +1739,21 @@ PrefabInstance:
       propertyPath: m_Name
       value: Convai NPC Mike Carter
       objectReference: {fileID: 0}
+    - target: {fileID: 3973251519004208318, guid: cc9605b0d2902a849aeab83a50df8bdd, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 6242094742071033383, guid: cc9605b0d2902a849aeab83a50df8bdd, type: 3}
       propertyPath: characterID
-      value: c8e0f39a-4e0e-11f1-97ef-42010a7be02e
+      value: 7104a604-8283-11f1-9d86-42010a7be02f
       objectReference: {fileID: 0}
     - target: {fileID: 6242094742071033383, guid: cc9605b0d2902a849aeab83a50df8bdd, type: 3}
       propertyPath: characterName
       value: leo
+      objectReference: {fileID: 0}
+    - target: {fileID: 8538244886975229914, guid: cc9605b0d2902a849aeab83a50df8bdd, type: 3}
+      propertyPath: m_Enabled
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 8538244886975229914, guid: cc9605b0d2902a849aeab83a50df8bdd, type: 3}
       propertyPath: conversationDistanceThreshold
@@ -1757,7 +1775,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 1102249283}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 0}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 74d3f2dd15d074a429eeea8c31f80b13, type: 3}
   m_Name: 
@@ -2254,8 +2272,12 @@ PrefabInstance:
       value: 0.7
       objectReference: {fileID: 0}
     - target: {fileID: 8995187496934191307, guid: 69dd98fa71bd5e649969b163d693f61b, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0.35
+      objectReference: {fileID: 0}
+    - target: {fileID: 8995187496934191307, guid: 69dd98fa71bd5e649969b163d693f61b, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -1.4
+      value: -0.2
       objectReference: {fileID: 0}
     - target: {fileID: 8995187496934191307, guid: 69dd98fa71bd5e649969b163d693f61b, type: 3}
       propertyPath: m_LocalRotation.x
@@ -2295,7 +2317,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &1177610108
 RectTransform:
   m_ObjectHideFlags: 0
@@ -2684,7 +2706,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &1297513122
 Transform:
   m_ObjectHideFlags: 0
@@ -5867,59 +5889,6 @@ MonoBehaviour:
   mouthGain: 1.2
   maximumJawWeight: 1.5
   mouthSmoothing: 18
---- !u!114 &8800100001
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 763742165}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 1bedf553246c4a589354b41b7f20d6df, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.SharedInitiativeOrchestrationController
-  conversationManager: {fileID: 1297513123}
-  conversationNPC: {fileID: 1102249286}
-  coachNPC: {fileID: 269995630}
-  participantId: local_player
-  condition: C
-  topicId: reading_vs_speaking
-  debateTopic: Reading and speaking, which is more important in learning English?
-  learnerStance: Speaking is more important for learning English.
-  opponentStance: Reading is more important for learning English.
-  taskGoal: Discuss with the NPC, pause for coach advice, then continue.
-  selectedStrategy: Any
-  previousCommands: []
-  previousNpcVersionsViewed: []
-  closingText: Good work. The guided conversation is complete.
-  automaticCoachAfterPlayerVoice: 1
-  showManualPauseButton: 0
-  speakCoachFeedback: 1
-  openAIModel: gpt-4o-mini
-  openAIBaseUrl: https://api.meding.site/v1/chat/completions
-  openAIApiKeyOverride: 
-  coachResponseTimeoutSeconds: 30
-  mockDebateTargetSeconds: 180
-  useWindowsTtsFallbackWhenConvaiSilent: 0
-  convaiSpeechFallbackDelaySeconds: 5
-  coachVoicePitch: 0.92
-  coachSpeechStyleInstruction: Use a warm, gentle, supportive adult female coaching
-    voice. Speak calmly and softly.
-  uiCanvas: {fileID: 86587544}
-  legacyInteractiveControls: {fileID: 1177610107}
-  legacyStartButton: {fileID: 597471344}
-  legacyRoundTimer: {fileID: 1186777322}
-  transcriptBridge: {fileID: 8800100002}
-  realtimeTranscriber: {fileID: 8800100003}
-  SessionRecord:
-    topic: 
-    learnerStance: 
-    taskGoal: 
-    completedTurns: 0
-    latestLearnerNote: 
-    latestOpponentUtterance: 
-    latestCoachSuggestion: 
 --- !u!114 &8800100002
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5927,7 +5896,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 763742165}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 0ee0de56c9b14c74ae428d45f2e04d50, type: 3}
   m_Name: 
@@ -5951,6 +5920,66 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 3e45d7ae1cf83f84481bd69830a97034, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.XfyunRealtimeTranscriber
+--- !u!114 &8800100006
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 763742165}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c5d6ab8c3a8e2d94491f4b055f6e4c6c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.ThreeStageDebatePracticeController
+  topicId: individual_practice_vs_interaction_speaking
+  debateTopic: Individual practice and interaction with others, which is more beneficial
+    for developing English speaking skills?
+  learnerStance: Interaction with others is more beneficial for developing English
+    speaking skills.
+  opponentStance: Individual practice is more beneficial for developing English speaking
+    skills.
+  transferDebateTopic: 'Classroom instruction or real-life context: which is more
+    beneficial for English speaking learning?'
+  loadTransferSceneOnCompletion: 1
+  uiCanvas: {fileID: 86587544}
+  coachNPC: {fileID: 269995630}
+  opponentNPC: {fileID: 0}
+  realtimeTranscriber: {fileID: 8800100003}
+  studyView: {fileID: 8800100008}
+  episodeController: {fileID: 8800100007}
+  coachFixedWorldPosition: {x: 0.8, y: 0, z: 2.33}
+  opponentFixedWorldPosition: {x: -0.25, y: 0, z: 2.5}
+  openAIModel: gpt-4o-mini
+  responseTimeoutSeconds: 30
+  openAIBaseUrl: https://api.meding.site/v1/chat/completions
+  openAIApiKeyOverride: 
+  speakCoachFeedback: 1
+  speakOpponentChallenges: 0
+--- !u!114 &8800100007
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 763742165}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 81729e43f537e1347b244cab94d42047, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.CoachEpisodeController
+--- !u!114 &8800100008
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 763742165}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 27116df099fbf81489edce5f00d3d5b1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.ThreeStageDebatePracticeView
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

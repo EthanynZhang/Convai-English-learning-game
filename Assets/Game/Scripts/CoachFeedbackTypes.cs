@@ -77,10 +77,57 @@ namespace Game.Debate
         Rules
     }
 
+    public enum CoachFeedbackFormat
+    {
+        FocusedShort,
+        Scene04CreeiDetailed,
+        Scene04CreeiWorkbench
+    }
+
+    public enum CoachFeedbackPurpose
+    {
+        LearnerSocratic,
+        CriticalIssue,
+        TargetedAdvice,
+        Example,
+        AdditionalSuggestion,
+        DirectAdvice,
+        ConversationalFollowUp,
+        CreeiModelAnswer
+    }
+
+    [Serializable]
+    public sealed class CreeiModelExampleSet
+    {
+        public string Claim = string.Empty;
+        public string Reason = string.Empty;
+        public string Evidence = string.Empty;
+        public string Explanation = string.Empty;
+        public string Impact = string.Empty;
+
+        public string GetText(CreeiComponent component) => component switch
+        {
+            CreeiComponent.Claim => Claim,
+            CreeiComponent.Reason => Reason,
+            CreeiComponent.Evidence => Evidence,
+            CreeiComponent.Explanation => Explanation,
+            CreeiComponent.Impact => Impact,
+            _ => string.Empty
+        };
+    }
+
+    [Serializable]
+    public sealed class CoachConversationTurn
+    {
+        public int TurnIndex;
+        public string LearnerRequest = string.Empty;
+        public string CoachResponse = string.Empty;
+        public CoachFeedbackPurpose Purpose;
+    }
+
     [Serializable]
     public sealed class CoachFeedbackRequest
     {
-        public string Condition = "Condition C";
         public string Stage = "Practice Debate";
         public string TopicId = "reading_vs_speaking";
         public string Topic = string.Empty;
@@ -90,11 +137,26 @@ namespace Game.Debate
         public int TurnId;
         public string OpponentUtteranceText = string.Empty;
         public string PlayerUtteranceText = string.Empty;
+        public CreeiArgumentSnapshot CurrentCreeiSnapshot;
+        public CreeiArgumentSnapshot PreviousCreeiSnapshot;
+        public CreeiComponentDiagnosis ComponentDiagnosis;
         public string PreviousCoachFeedbackText = string.Empty;
         public string SelectedStrategy = string.Empty;
+        public string ConfirmedFocus = string.Empty;
+        public string LearnerRequest = string.Empty;
+        public bool LearnerRequestIsPrimaryAgenda;
+        public CoachFeedbackPurpose? Purpose;
+        public CoachConversationTurn[] ConversationHistory = Array.Empty<CoachConversationTurn>();
+        public string AcceptedCriticalFeedback = string.Empty;
+        public string DiagnosisIssueCode = string.Empty;
+        public string RecommendedStrategy = string.Empty;
+        public string TargetSuccessCriterion = string.Empty;
+        public string[] CreeiMissingOrWeakComponents = Array.Empty<string>();
+        public string CreeiGapSummary = string.Empty;
         public string[] PreviousCommands = Array.Empty<string>();
         public string[] PreviousNpcVersionsViewed = Array.Empty<string>();
         public CoachFeedbackLevel FeedbackLevel = CoachFeedbackLevel.Level2;
+        public CoachFeedbackFormat FeedbackFormat = CoachFeedbackFormat.FocusedShort;
         public bool DetailedJson;
     }
 
@@ -109,9 +171,14 @@ namespace Game.Debate
         public CoachFeedbackLevel FeedbackLevel = CoachFeedbackLevel.Level2;
         public string FeedbackText = string.Empty;
         public string NextAction = "add evidence";
+        public string TargetSuccessCriterion = string.Empty;
+        public CreeiModelExampleSet CreeiModelExamples = new();
         public CoachFeedbackSource Source = CoachFeedbackSource.Rules;
         public string RawJson = string.Empty;
         public string DebugInfo = string.Empty;
+        public int RequestAttemptCount;
+        public int RequestByteCount;
+        public int RequestElapsedMilliseconds;
     }
 
     [Serializable]

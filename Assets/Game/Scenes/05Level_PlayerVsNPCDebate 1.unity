@@ -1074,7 +1074,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &1251589866
 RectTransform:
   m_ObjectHideFlags: 0
@@ -1307,6 +1307,9 @@ GameObject:
   m_Component:
   - component: {fileID: 1312309473}
   - component: {fileID: 1312309472}
+  - component: {fileID: 1312309474}
+  - component: {fileID: 1312309475}
+  - component: {fileID: 1312309476}
   m_Layer: 0
   m_Name: Debate Round System
   m_TagString: Untagged
@@ -1330,25 +1333,34 @@ MonoBehaviour:
   roundDurationSeconds: 180
   openingCaptionSeconds: 2.5
   closingCaptionSeconds: 5
-  debateTopic: Reading and speaking, which is more important in learning English?
-  refereeCaptionText: {fileID: 1863459760}
-  refereeOpeningLine: 'Welcome, everyone. Today''s debate topic is: {0} Berance will
-    begin with the opening argument. The debate begins.'
+  debateTopic: 'Classroom instruction or real-life context: which is more beneficial
+    for English speaking learning?'
+  refereeCaptionText: {fileID: 0}
+  refereeOpeningLine: 'Welcome to the transfer debate. Today''s topic is: {0} Berance
+    will present the classroom instruction argument first. Then you will give a transfer
+    argument for real-life context.'
   refereeClosingLine: Thank you, everyone. The debate is over.
   refereeAudioSource: {fileID: 283414513}
-  refereeOpeningClip: {fileID: 8300000, guid: a442ef2d7463bcc4596b4e40d9099391, type: 3}
+  refereeOpeningClip: {fileID: 0}
   refereeClosingClip: {fileID: 8300000, guid: 26af9e115fcba4d40aca4c58a39b134f, type: 3}
   refereePresentation: {fileID: 283414514}
-  startButton: {fileID: 1251589869}
+  useMiniMaxRefereeNarration: 1
+  refereeMiniMaxVoiceId: English_Gentle-voiced_man
+  startButton: {fileID: 0}
   unlockCursorBeforeStart: 1
   timerText: {fileID: 206790017}
   timerPrefix: 'Time Left '
+  waitForPlayerSpeechBeforeTimer: 1
   opponentNPC: {fileID: 129422508}
   sendOpponentOpeningPrompt: 1
+  disableOpponentConversation: 0
+  waitForOpponentOpeningBeforePlayerPractice: 1
+  opponentOpeningTimeoutSeconds: 45
   opponentOpeningDelaySeconds: 0.5
-  opponentOpeningPrompt: 'The debate topic is: {0} You are the opposing side. Argue
-    that reading is more important in learning English. Present your opening argument
-    in under 20 seconds, then wait for the player to respond.'
+  opponentOpeningPrompt: 'The debate topic is: {0} Speak first as the classroom instruction
+    side. Deliver one clear CREEI opening argument in English at a measured pace. Then
+    stop and invite the player to present a transfer argument for real-life context.
+    Do not answer for the player.'
 --- !u!4 &1312309473
 Transform:
   m_ObjectHideFlags: 0
@@ -1364,6 +1376,60 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1312309474
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1312309471}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7da59edf32675e04db8f2d813ed05b19, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.TransferDebateStageGuard
+--- !u!114 &1312309475
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1312309471}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3e45d7ae1cf83f84481bd69830a97034, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.XfyunRealtimeTranscriber
+--- !u!114 &1312309476
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1312309471}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2b8c16c600dda334e82df0f9d1243ec0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Debate.DebatePreparationController
+  preparationDurationSeconds: 180
+  roundManager: {fileID: 1312309472}
+  realtimeTranscriber: {fileID: 1312309475}
+  preferredMicrophoneDevice: 
+  controlsToDisableDuringPreparation: []
+  preparationRoot: {fileID: 0}
+  countdownText: {fileID: 0}
+  notesInput: {fileID: 0}
+  voicePreviewText: {fileID: 0}
+  voiceStatusText: {fileID: 0}
+  microphoneButton: {fileID: 0}
+  microphoneButtonLabel: {fileID: 0}
+  skipPreparationButton: {fileID: 0}
+  roundTimerRoot: {fileID: 0}
+  debateNotesTab: {fileID: 0}
+  debateNotesPanel: {fileID: 0}
+  debateNotesText: {fileID: 0}
+  debateNotesScrollRect: {fileID: 0}
 --- !u!1 &1719958925
 GameObject:
   m_ObjectHideFlags: 0
@@ -1617,7 +1683,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &1846925591
 RectTransform:
   m_ObjectHideFlags: 0
