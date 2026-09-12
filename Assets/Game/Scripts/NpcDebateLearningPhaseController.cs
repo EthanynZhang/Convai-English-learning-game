@@ -55,7 +55,6 @@ namespace Game.Debate
         [SerializeField] private bool logRtVoiceSelection = true;
         [SerializeField] private bool reloadRtVoiceProviderIfVoiceMissing = true;
         [SerializeField] private bool useLocalCachedTts;
-        [SerializeField] private bool fallbackToConvaiVoiceIfClipMissing;
         [SerializeField] private float demoLineSeconds = 6f;
         [SerializeField] private bool narrateEveryLearningStage = true;
         [SerializeField] private bool useMiniMaxStageNarration = true;
@@ -1037,7 +1036,7 @@ namespace Game.Debate
 
             if (useMiniMaxStageNarration && _miniMaxTtsClient != null)
             {
-                yield return _miniMaxTtsClient.RequestClip(
+                yield return RequestSceneOneTtsClip(
                     narrationText,
                     generation,
                     IsNarrationGenerationCurrent,
@@ -1128,7 +1127,7 @@ namespace Game.Debate
 
             if (useMiniMaxStageNarration && _miniMaxTtsClient != null)
             {
-                yield return _miniMaxTtsClient.RequestClip(
+                yield return RequestSceneOneTtsClip(
                     narrationText,
                     generation,
                     IsNarrationGenerationCurrent,
@@ -1179,6 +1178,57 @@ namespace Game.Debate
             return enabled && !_completed && generation == _narrationGeneration;
         }
 
+        private IEnumerator RequestSceneOneTtsClip(
+            string text,
+            int generation,
+            Func<int, bool> isGenerationCurrent,
+            Action<AudioClip> onSuccess,
+            Action<string> onFailure)
+        {
+            // The editor may fill a missing developer cache from MiniMax. Player builds are cache-only.
+            IEnumerator request = Application.isEditor
+                ? _miniMaxTtsClient.RequestClip(
+                    text,
+                    generation,
+                    isGenerationCurrent,
+                    onSuccess,
+                    onFailure)
+                : _miniMaxTtsClient.RequestLocalClip(
+                    text,
+                    generation,
+                    isGenerationCurrent,
+                    onSuccess,
+                    onFailure);
+            yield return request;
+        }
+
+        private IEnumerator RequestSceneOneTtsClip(
+            string text,
+            string voiceId,
+            int generation,
+            Func<int, bool> isGenerationCurrent,
+            Action<AudioClip> onSuccess,
+            Action<string> onFailure)
+        {
+            // Run the fixed tutorial once in the editor, then package the populated cache.
+            IEnumerator request = Application.isEditor
+                ? _miniMaxTtsClient.RequestClip(
+                    text,
+                    voiceId,
+                    generation,
+                    isGenerationCurrent,
+                    onSuccess,
+                    onFailure)
+                : _miniMaxTtsClient.RequestLocalClip(
+                    text,
+                    voiceId,
+                    generation,
+                    isGenerationCurrent,
+                    onSuccess,
+                    onFailure);
+            yield return request;
+        }
+
         private static string BuildStageNarrationText(DebateLearningStageSpec stage)
         {
             string body = (stage.Body ?? string.Empty)
@@ -1200,7 +1250,9 @@ namespace Game.Debate
                 SetTranscriptText(lines, i);
                 ConvaiNPC speaker = GetNpcForLine(line);
                 float voiceSeconds = 0f;
-                yield return PlayMiniMaxDialogueLine(
+                yield return PlayCachedDialogueLine(
+                    CurrentStage.Key,
+                    i,
                     line,
                     speaker,
                     seconds => voiceSeconds = seconds);
@@ -1233,7 +1285,9 @@ namespace Game.Debate
                 });
         }
 
-        private IEnumerator PlayMiniMaxDialogueLine(
+        private IEnumerator PlayCachedDialogueLine(
+            DebateLearningStageKey stageKey,
+            int lineIndex,
             DemoDialogueLine line,
             ConvaiNPC speaker,
             Action<float> onCompleted)
@@ -1244,12 +1298,19 @@ namespace Game.Debate
                 yield break;
             }
 
+            if (useLocalCachedTts &&
+                TryPlayCachedDemoTts(stageKey, lineIndex, line, speaker, out float resourceClipSeconds))
+            {
+                onCompleted?.Invoke(resourceClipSeconds);
+                yield break;
+            }
+
             int generation = _narrationGeneration;
             AudioClip generatedClip = null;
             string miniMaxError = string.Empty;
             if (useMiniMaxStageNarration && _miniMaxTtsClient != null)
             {
-                yield return _miniMaxTtsClient.RequestClip(
+                yield return RequestSceneOneTtsClip(
                     line.Text,
                     GetMiniMaxVoiceId(line),
                     generation,
@@ -1279,9 +1340,9 @@ namespace Game.Debate
             if (speechSeconds <= 0f)
             {
                 string reason = string.IsNullOrWhiteSpace(miniMaxError)
-                    ? "No MiniMax or RT-Voice speech provider was available."
+                    ? "No packaged WAV or RT-Voice speech provider was available."
                     : miniMaxError;
-                Debug.LogWarning($"MiniMax dialogue demo voice could not play for {line.SpeakerName}. " + reason);
+                Debug.LogWarning($"Local dialogue demo voice could not play for {line.SpeakerName}. " + reason);
             }
 
             onCompleted?.Invoke(speechSeconds);
@@ -1521,45 +1582,6 @@ namespace Game.Debate
             _currentGeneratedAudioClip = destroyWhenStopped ? clip : null;
             SetDemoTalkingState(speaker, true);
             return clip.length;
-        }
-
-        private float PlayDialogueLine(DebateLearningStageKey stageKey, int lineIndex, DemoDialogueLine line, ConvaiNPC speaker)
-        {
-            if (!playNpcVoice || speaker == null || string.IsNullOrWhiteSpace(line.Text))
-            {
-                return 0f;
-            }
-
-            if (useLocalCachedTts && TryPlayCachedDemoTts(stageKey, lineIndex, line, speaker, out float cachedClipSeconds))
-            {
-                return cachedClipSeconds;
-            }
-
-            if (useRtVoiceTts)
-            {
-#if CROSSTALES_RTVOICE
-                if (TryPlayRtVoiceDemoTts(line, speaker, out float rtVoiceSeconds))
-                {
-                    return rtVoiceSeconds;
-                }
-
-                Debug.LogWarning($"RT-Voice demo TTS did not play for {line.SpeakerName}. Local WAV and Convai fallback are disabled while RT-Voice mode is enabled.");
-#else
-                Debug.LogWarning("RT-Voice demo TTS is enabled, but the project was compiled without CROSSTALES_RTVOICE. Use local cached TTS clips or install RT-Voice Pro and define CROSSTALES_RTVOICE.");
-#endif
-                return 0f;
-            }
-
-            if (useLocalCachedTts && !fallbackToConvaiVoiceIfClipMissing)
-            {
-                string resourcePath = DebateLearningContent.GetDialogueClipResourcePath(stageKey, lineIndex, line);
-                Debug.LogWarning($"Missing cached debate demo TTS clip at Resources/{resourcePath}.wav. Skipping Convai fallback for fixed-script demo.");
-                return 0f;
-            }
-
-            ConvaiNPCManager.Instance?.SetActiveConvaiNPC(speaker);
-            speaker.SendTextDataAsync(DebateLearningContent.GetRepeatExactlyPrompt(line.Text));
-            return demoLineSeconds;
         }
 
 #if CROSSTALES_RTVOICE

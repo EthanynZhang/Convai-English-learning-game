@@ -5,6 +5,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using Newtonsoft.Json.Linq;
 using TMPro;
 using UnityEditor;
 using UnityEngine;
@@ -1599,7 +1600,7 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void Scene04ControllerDefaultsToTheProjectRelayEndpoint()
+        public void Scene04ControllerDefaultsToDeepSeekFlash()
         {
             GameObject controllerObject = new("Scene 04 Controller");
             try
@@ -1608,15 +1609,56 @@ namespace Game.Tests.EditMode
                     controllerObject.AddComponent<ThreeStageDebatePracticeController>();
                 FieldInfo baseUrlField = typeof(ThreeStageDebatePracticeController).GetField(
                     "openAIBaseUrl", BindingFlags.NonPublic | BindingFlags.Instance);
+                FieldInfo modelField = typeof(ThreeStageDebatePracticeController).GetField(
+                    "openAIModel", BindingFlags.NonPublic | BindingFlags.Instance);
 
                 Assert.IsNotNull(baseUrlField);
-                Assert.AreEqual("https://api.meding.site/v1/chat/completions",
+                Assert.IsNotNull(modelField);
+                Assert.AreEqual("https://api.deepseek.com/chat/completions",
                     baseUrlField.GetValue(controller));
+                Assert.AreEqual("deepseek-flash", modelField.GetValue(controller));
             }
             finally
             {
                 UnityEngine.Object.DestroyImmediate(controllerObject);
             }
+        }
+
+        [Test]
+        public void DeepSeekCoachRequestsDisableThinkingForTheScene04LatencyBudget()
+        {
+            DebateCoachFeedbackGenerator generator = new(
+                "deepseek-flash", 30f, "https://api.deepseek.com/chat/completions");
+
+            JObject request = generator.BuildOpenAIRequestJson(new CoachFeedbackRequest());
+
+            Assert.AreEqual("disabled", (string)request["thinking"]?["type"]);
+        }
+
+        [Test]
+        public void DeepSeekDiagnosisRequestsUseSupportedJsonObjectFormatAndDisableThinking()
+        {
+            CoachDiagnosisEngine engine = new(
+                "deepseek-flash", 30f, "https://api.deepseek.com/chat/completions");
+
+            JObject request = engine.BuildRequestJson(new CoachDiagnosisRequest());
+
+            Assert.AreEqual("json_object", (string)request["response_format"]?["type"]);
+            Assert.IsNull(request["response_format"]?["json_schema"]);
+            Assert.AreEqual("disabled", (string)request["thinking"]?["type"]);
+            StringAssert.Contains("JSON", (string)request["messages"]?[0]?["content"]);
+        }
+
+        [Test]
+        public void OpenAiDiagnosisRequestsKeepStrictJsonSchemaFormat()
+        {
+            CoachDiagnosisEngine engine = new("gpt-4o-mini");
+
+            JObject request = engine.BuildRequestJson(new CoachDiagnosisRequest());
+
+            Assert.AreEqual("json_schema", (string)request["response_format"]?["type"]);
+            Assert.IsNotNull(request["response_format"]?["json_schema"]?["schema"]);
+            Assert.IsNull(request["thinking"]);
         }
 
         private static string[] VisibleCoachButtonLabels(ThreeStageDebatePracticeView view)

@@ -1,6 +1,8 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using Game.Debate;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.UI;
@@ -68,7 +70,7 @@ namespace Game.Tests.EditMode
                 Assert.IsNotNull(canvas.GetComponent<GraphicRaycaster>());
 
                 Button[] buttons = host.GetComponentsInChildren<Button>(true);
-                Assert.AreEqual(5, buttons.Length);
+                Assert.AreEqual(6, buttons.Length);
                 foreach (string sceneName in new[]
                          {
                              "01Level_NPCVsNPCDebate",
@@ -78,11 +80,79 @@ namespace Game.Tests.EditMode
                          })
                     Assert.IsTrue(buttons.Any(button =>
                         button.gameObject.name == "Load " + sceneName), sceneName);
+
+                Assert.IsTrue(buttons.Any(button =>
+                    button.gameObject.name == "Toggle Convai Flow"));
             }
             finally
             {
                 UnityEngine.Object.DestroyImmediate(host);
             }
+        }
+
+        [Test]
+        public void SharedConversationSettingDefaultsToConvaiDisabled()
+        {
+            const string currentKey = ConversationFlowSettings.PlayerPrefsKey;
+            const string legacyKey = "SCENE03_DISABLE_CONVAI_FLOW";
+            bool hadCurrent = PlayerPrefs.HasKey(currentKey);
+            bool hadLegacy = PlayerPrefs.HasKey(legacyKey);
+            int currentValue = PlayerPrefs.GetInt(currentKey, 1);
+            int legacyValue = PlayerPrefs.GetInt(legacyKey, 1);
+
+            try
+            {
+                PlayerPrefs.DeleteKey(currentKey);
+                PlayerPrefs.DeleteKey(legacyKey);
+                Assert.IsTrue(ConversationFlowSettings.DisableConvai);
+            }
+            finally
+            {
+                if (hadCurrent) PlayerPrefs.SetInt(currentKey, currentValue);
+                else PlayerPrefs.DeleteKey(currentKey);
+                if (hadLegacy) PlayerPrefs.SetInt(legacyKey, legacyValue);
+                else PlayerPrefs.DeleteKey(legacyKey);
+            }
+        }
+
+        [Test]
+        public void FreshApplicationRunAlwaysResetsConvaiToDisabled()
+        {
+            const string key = ConversationFlowSettings.PlayerPrefsKey;
+            bool hadValue = PlayerPrefs.HasKey(key);
+            int oldValue = PlayerPrefs.GetInt(key, 1);
+
+            try
+            {
+                PlayerPrefs.SetInt(key, 0);
+                MethodInfo initializeDefault = typeof(ConversationFlowSettings).GetMethod(
+                    "InitializeDefault",
+                    BindingFlags.NonPublic | BindingFlags.Static);
+                Assert.IsNotNull(initializeDefault);
+
+                initializeDefault.Invoke(null, null);
+
+                Assert.IsTrue(ConversationFlowSettings.DisableConvai);
+                Assert.IsFalse(ConvaiNetworkPolicy.RequestsAllowed);
+            }
+            finally
+            {
+                if (hadValue) PlayerPrefs.SetInt(key, oldValue);
+                else PlayerPrefs.DeleteKey(key);
+                PlayerPrefs.Save();
+            }
+        }
+
+        [TestCase("Convai/Scripts/Runtime/Core/ConvaiNPC.cs")]
+        [TestCase("Convai/Scripts/Runtime/Core/ConvaiGRPCAPI.cs")]
+        [TestCase("Convai/Scripts/Runtime/Features/NPC2NPC/NPC2NPCConversationManager.cs")]
+        [TestCase("Convai/Scripts/Runtime/Features/NPC2NPC/NPC2NPCGRPCClient.cs")]
+        [TestCase("Convai/Scripts/Runtime/PlayerStats/API/LongTermMemoryAPI.cs")]
+        [TestCase("Convai/Scripts/Runtime/Features/NarrativeDesign/Runtime/NarrativeDesignAPI.cs")]
+        public void EveryConvaiRuntimeTransportUsesTheGlobalNetworkPolicy(string assetRelativePath)
+        {
+            string source = File.ReadAllText(Path.Combine(Application.dataPath, assetRelativePath));
+            StringAssert.Contains("ConvaiNetworkPolicy.RequestsAllowed", source, assetRelativePath);
         }
     }
 }

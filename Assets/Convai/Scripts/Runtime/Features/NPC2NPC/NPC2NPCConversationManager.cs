@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Convai.Scripts.Runtime.Core;
 using Convai.Scripts.Runtime.LoggerSystem;
+using Game.Debate;
 using Grpc.Core;
 using Service;
 using UnityEngine;
@@ -230,6 +231,9 @@ namespace Convai.Scripts.Runtime.Features
         /// <returns> The new ConvaiServiceClient. </returns>
         private ConvaiService.ConvaiServiceClient CreateNewConvaiServiceClient()
         {
+            if (!ConvaiNetworkPolicy.RequestsAllowed)
+                return null;
+
             try
             {
                 SslCredentials credentials = new();

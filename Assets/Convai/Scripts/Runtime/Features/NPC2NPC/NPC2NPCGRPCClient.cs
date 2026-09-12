@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Convai.Scripts.Runtime.Core;
 using Convai.Scripts.Runtime.LoggerSystem;
 using Convai.Scripts.Runtime.Utils;
+using Game.Debate;
 using Grpc.Core;
 using Service;
 using UnityEngine;
@@ -16,8 +17,10 @@ namespace Convai.Scripts.Runtime.Features
     /// </summary>
     public class NPC2NPCGRPCClient : MonoBehaviour
     {
+        private const string GRPC_API_ENDPOINT = "stream.convai.com";
         private readonly CancellationTokenSource _cancellationTokenSource = new();
         private string _apiKey;
+        private Channel _channel;
         private ConvaiService.ConvaiServiceClient _client;
         private NPCGroup _npcGroup;
 
@@ -68,6 +71,9 @@ namespace Convai.Scripts.Runtime.Features
         /// <returns>A task that represents the asynchronous operation.</returns>
         public async Task SendTextData(string userText, string characterID, string sessionID, bool isLipSyncActive, FaceModel faceModel, ConvaiGroupNPCController npcController)
         {
+            if (!EnsureClientInitialized())
+                return;
+
             AsyncDuplexStreamingCall<GetResponseRequest, GetResponseResponse> call = GetAsyncDuplexStreamingCallOptions();
 
             GetResponseRequest getResponseConfigRequest = CreateGetResponseRequest(characterID, sessionID, isLipSyncActive, faceModel, false, null);
@@ -93,6 +99,25 @@ namespace Convai.Scripts.Runtime.Features
             {
                 ConvaiLogger.Warn($"NPC2NPC text request failed before receiving a response: {ex.Message}", ConvaiLogger.LogCategory.Character);
             }
+        }
+
+        private bool EnsureClientInitialized()
+        {
+            if (!ConvaiNetworkPolicy.RequestsAllowed)
+                return false;
+
+            if (_client != null)
+                return true;
+
+            SslCredentials credentials = new();
+            List<ChannelOption> options = new()
+            {
+                new ChannelOption(ChannelOptions.MaxReceiveMessageLength, 16 * 1024 * 1024),
+                new ChannelOption("grpc.enable_http_proxy", 0)
+            };
+            _channel = new Channel(GRPC_API_ENDPOINT, credentials, options);
+            _client = new ConvaiService.ConvaiServiceClient(_channel);
+            return true;
         }
 
         /// <summary>

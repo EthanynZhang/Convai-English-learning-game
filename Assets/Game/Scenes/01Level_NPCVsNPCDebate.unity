@@ -497,7 +497,6 @@ MonoBehaviour:
   logRtVoiceSelection: 1
   reloadRtVoiceProviderIfVoiceMissing: 1
   useLocalCachedTts: 1
-  fallbackToConvaiVoiceIfClipMissing: 0
   demoLineSeconds: 6
   narrateEveryLearningStage: 1
   useMiniMaxStageNarration: 1

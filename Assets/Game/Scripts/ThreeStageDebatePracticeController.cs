@@ -43,9 +43,9 @@ namespace Game.Debate
         [SerializeField] private Vector3 opponentFixedWorldPosition = new(-0.25f, 0f, 2.5f);
 
         [Header("Coach Services")]
-        [SerializeField] private string openAIModel = "gpt-4o-mini";
+        [SerializeField] private string openAIModel = "deepseek-flash";
         [SerializeField] private float responseTimeoutSeconds = 30f;
-        [SerializeField] private string openAIBaseUrl = "https://api.meding.site/v1/chat/completions";
+        [SerializeField] private string openAIBaseUrl = "https://api.deepseek.com/chat/completions";
         [SerializeField] private string openAIApiKeyOverride = "";
         [SerializeField] private bool speakCoachFeedback = true;
         [SerializeField] private bool speakOpponentChallenges = true;
@@ -123,6 +123,7 @@ namespace Game.Debate
         private Action<bool> _microAnnaSpeechCompletion;
         private float _microCoachVoiceRequestedAt;
         private float _microCoachVoiceStartedAt;
+        private bool _useLocalConversationFlow = true;
 
         private enum TechnicalOperation
         {
@@ -140,6 +141,9 @@ namespace Game.Debate
         public float RecordingElapsedSeconds { get; private set; }
         public string ConfirmedTranscript { get; private set; } = string.Empty;
         public float StageElapsedSeconds => Mathf.Max(0f, _stageElapsed);
+        public ConvaiNPC CoachNPC => coachNPC;
+        public ConvaiNPC OpponentNPC => opponentNPC;
+        public bool UsesLocalConversationFlow => _useLocalConversationFlow;
         public bool IsCapturingLearnerRequest =>
             _voiceCaptureTarget == DebateVoiceCaptureTarget.LearnerRequest;
         public string ParticipantId => CoachStudySessionContext.Current?.ParticipantId ?? string.Empty;
@@ -162,6 +166,40 @@ namespace Game.Debate
             }
         }
         public bool IsNpcSpeechActive => _coachSpeechPending || _coachSpeechStarted;
+
+        public void SetUseLocalConversationFlow(bool useLocalFlow)
+        {
+            bool hadCoachCompletion = _microAnnaSpeechCompletion != null;
+            bool hadOpponentCompletion = _microLeoSpeechCompletion != null;
+            if (_useLocalConversationFlow != useLocalFlow)
+            {
+                StopFixedStageIntroductionSpeech(true);
+                StopCoachSpeech();
+                StopOpponentSpeech();
+                if (hadCoachCompletion) CompleteCoachSpeechCallback(false);
+                if (hadOpponentCompletion) CompleteOpponentSpeech(false);
+            }
+
+            _useLocalConversationFlow = useLocalFlow;
+            if (useLocalFlow)
+            {
+                DisableConvaiSpeech(coachNPC);
+                DisableConvaiSpeech(opponentNPC);
+            }
+            else
+            {
+                if (coachNPC != null)
+                {
+                    coachNPC.isCharacterActive = true;
+                    ConvaiNPCManager.Instance?.SetActiveConvaiNPC(coachNPC);
+                }
+
+                if (opponentNPC != null && opponentNPC.gameObject.activeInHierarchy)
+                {
+                    opponentNPC.isCharacterActive = true;
+                }
+            }
+        }
 
         private void Awake()
         {
@@ -516,6 +554,21 @@ namespace Game.Debate
             opponentNPC.gameObject.SetActive(false);
         }
 
+        private static void DisableConvaiSpeech(ConvaiNPC npc)
+        {
+            if (npc == null)
+            {
+                return;
+            }
+
+            if (npc.IsCharacterTalking)
+            {
+                npc.InterruptCharacterSpeech();
+            }
+
+            npc.isCharacterActive = false;
+        }
+
         private void DisableCoachNpcToNpcFlow()
         {
             if (coachNPC != null)
@@ -629,6 +682,21 @@ namespace Game.Debate
         private void StartFixedStageIntroductionSpeech(string text)
         {
             StopFixedStageIntroductionSpeech(true);
+            if (_useLocalConversationFlow)
+            {
+                if (string.IsNullOrWhiteSpace(text) || coachNPC == null)
+                {
+                    CompleteStageIntroduction(false, "local_kokoro_unavailable");
+                    return;
+                }
+
+                StartCoachSpeech(text);
+                if (!_coachSpeechPending && !_coachSpeechStarted)
+                {
+                    CompleteStageIntroduction(false, "local_kokoro_start_failed");
+                }
+                return;
+            }
 #if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -819,15 +887,31 @@ namespace Game.Debate
                 return;
             }
             opponentNPC.gameObject.SetActive(true);
+            _opponentSpeechPending = true;
+            _opponentSpeechStarted = false;
+            _opponentSpeechDeadline = Time.realtimeSinceStartup +
+                                      Mathf.Max(20f, responseTimeoutSeconds + 8f);
+            if (_useLocalConversationFlow)
+            {
+                Scene4KokoroConversationController localSpeech =
+                    Scene4KokoroConversationController.Instance;
+                if (localSpeech == null ||
+                    !localSpeech.TrySpeak(
+                        opponentNPC,
+                        text,
+                        Scene4KokoroConversationController.OpponentSpeakerId))
+                {
+                    _opponentSpeechPending = false;
+                    CompleteOpponentSpeech(false);
+                }
+                return;
+            }
+
             string prompt = JsonConvert.SerializeObject(new
             {
                 instruction = "Leo must speak challenge_text exactly once. Do not add advice or extra words.",
                 challenge_text = text.Trim()
             });
-            _opponentSpeechPending = true;
-            _opponentSpeechStarted = false;
-            _opponentSpeechDeadline = Time.realtimeSinceStartup +
-                                      Mathf.Max(20f, responseTimeoutSeconds + 8f);
             ConvaiNPCManager.Instance?.SetActiveConvaiNPC(opponentNPC);
             opponentNPC.SendTextDataAsync(prompt);
         }
@@ -835,8 +919,24 @@ namespace Game.Debate
         private void UpdateOpponentSpeech()
         {
             if (!_opponentSpeechPending && !_opponentSpeechStarted) return;
-            bool talking = opponentNPC != null && opponentNPC.IsCharacterTalking;
-            bool queued = opponentNPC != null && opponentNPC.GetAudioResponseCount() > 0;
+            Scene4KokoroConversationController localSpeech =
+                _useLocalConversationFlow ? Scene4KokoroConversationController.Instance : null;
+            if (localSpeech != null &&
+                localSpeech.TryConsumeFailure(opponentNPC, out string localFailure))
+            {
+                Debug.LogWarning("Local Kokoro opponent speech failed: " + localFailure, this);
+                _opponentSpeechPending = false;
+                _opponentSpeechStarted = false;
+                CompleteOpponentSpeech(false);
+                return;
+            }
+
+            bool talking = localSpeech != null
+                ? localSpeech.IsSpeaking(opponentNPC)
+                : opponentNPC != null && opponentNPC.IsCharacterTalking;
+            bool queued = localSpeech != null
+                ? localSpeech.HasQueuedOrPlaying(opponentNPC)
+                : opponentNPC != null && opponentNPC.GetAudioResponseCount() > 0;
             if (_opponentSpeechPending && talking)
             {
                 _opponentSpeechPending = false;
@@ -907,9 +1007,13 @@ namespace Game.Debate
 
         private void StopOpponentSpeech()
         {
-            if (opponentNPC != null && opponentNPC.gameObject.activeInHierarchy &&
-                (_opponentSpeechPending || _opponentSpeechStarted))
-                opponentNPC.InterruptCharacterSpeech();
+            if (opponentNPC != null && (_opponentSpeechPending || _opponentSpeechStarted))
+            {
+                if (_useLocalConversationFlow)
+                    Scene4KokoroConversationController.Instance?.StopSpeech(opponentNPC);
+                else if (opponentNPC.gameObject.activeInHierarchy)
+                    opponentNPC.InterruptCharacterSpeech();
+            }
             _opponentSpeechPending = false;
             _opponentSpeechStarted = false;
             _opponentSpeechDeadline = 0f;
@@ -1604,11 +1708,6 @@ namespace Game.Debate
         {
             StopCoachSpeech();
             if (!speakCoachFeedback || coachNPC == null || string.IsNullOrWhiteSpace(text)) return;
-            string prompt = JsonConvert.SerializeObject(new
-            {
-                instruction = "Anna must speak the exact English Coach message in feedback_text once. Do not add words.",
-                feedback_text = text.Trim()
-            });
             _coachSpeechPending = true;
             _coachSpeechStarted = false;
             _coachSpeechDeadline = Time.realtimeSinceStartup + Mathf.Max(20f, responseTimeoutSeconds + 8f);
@@ -1622,6 +1721,27 @@ namespace Game.Debate
                     feedback_purpose = "coach_feedback"
                 });
             }
+            if (_useLocalConversationFlow)
+            {
+                Scene4KokoroConversationController localSpeech =
+                    Scene4KokoroConversationController.Instance;
+                if (localSpeech == null ||
+                    !localSpeech.TrySpeak(
+                        coachNPC,
+                        text,
+                        Scene4KokoroConversationController.CoachSpeakerId))
+                {
+                    _coachSpeechPending = false;
+                    CompleteCoachSpeechCallback(false);
+                }
+                return;
+            }
+
+            string prompt = JsonConvert.SerializeObject(new
+            {
+                instruction = "Anna must speak the exact English Coach message in feedback_text once. Do not add words.",
+                feedback_text = text.Trim()
+            });
             ConvaiNPCManager.Instance?.SetActiveConvaiNPC(coachNPC);
             coachNPC.SendTextDataAsync(prompt);
         }
@@ -1629,8 +1749,24 @@ namespace Game.Debate
         private void UpdateCoachSpeech()
         {
             if (!_coachSpeechPending && !_coachSpeechStarted) return;
-            bool talking = coachNPC != null && coachNPC.IsCharacterTalking;
-            bool queued = coachNPC != null && coachNPC.GetAudioResponseCount() > 0;
+            Scene4KokoroConversationController localSpeech =
+                _useLocalConversationFlow ? Scene4KokoroConversationController.Instance : null;
+            if (localSpeech != null &&
+                localSpeech.TryConsumeFailure(coachNPC, out string localFailure))
+            {
+                Debug.LogWarning("Local Kokoro coach speech failed: " + localFailure, this);
+                _coachSpeechPending = false;
+                _coachSpeechStarted = false;
+                CompleteCoachSpeechCallback(false);
+                return;
+            }
+
+            bool talking = localSpeech != null
+                ? localSpeech.IsSpeaking(coachNPC)
+                : coachNPC != null && coachNPC.IsCharacterTalking;
+            bool queued = localSpeech != null
+                ? localSpeech.HasQueuedOrPlaying(coachNPC)
+                : coachNPC != null && coachNPC.GetAudioResponseCount() > 0;
             if (_coachSpeechPending && talking)
             {
                 _coachSpeechPending = false;
@@ -1693,7 +1829,12 @@ namespace Game.Debate
         private void StopCoachSpeech()
         {
             if ((_coachSpeechPending || _coachSpeechStarted) && coachNPC != null)
-                coachNPC.InterruptCharacterSpeech();
+            {
+                if (_useLocalConversationFlow)
+                    Scene4KokoroConversationController.Instance?.StopSpeech(coachNPC);
+                else
+                    coachNPC.InterruptCharacterSpeech();
+            }
             _coachSpeechPending = false;
             _coachSpeechStarted = false;
             _coachSpeechDeadline = 0f;

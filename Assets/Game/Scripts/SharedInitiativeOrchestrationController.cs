@@ -210,6 +210,8 @@ namespace Game.Debate
         private float _mockDebateLeoDurationSeconds;
         private string[] _mockDebateLeoSpeechSegments = Array.Empty<string>();
         private int _mockDebateLeoSegmentIndex;
+        private Coroutine _mockDebateLeoLocalSpeechRoutine;
+        private AudioSource _mockDebateLeoLocalAudioSource;
         private readonly CoachPolicyConfig _coachPolicyConfig = CoachPolicyConfig.CreateDefault();
         private ICoachDiagnosisEngine _diagnosisEngine;
         private CoachResearchLogger _researchLogger;
@@ -253,6 +255,35 @@ namespace Game.Debate
             CreeiStage.Explanation,
             CreeiStage.Impact
         };
+
+        public const int MockDebateLeoKokoroSpeakerId = 5;
+        public const float MockDebateLeoKokoroSpeed = 1.05f;
+        public const string MockDebateLeoClipResourceFolder =
+            "DebateLearningTts/Scene04MockDebate";
+
+        private static readonly string[] MockDebateLeoClipNames =
+        {
+            "Leo_01_Claim",
+            "Leo_02_Reason",
+            "Leo_03_Evidence",
+            "Leo_04_Explanation",
+            "Leo_05_Impact"
+        };
+
+        public static string[] GetMockDebateLeoSpeechSegments()
+        {
+            return (string[])MockDebateLeoCreeiSegments.Clone();
+        }
+
+        public static string GetMockDebateLeoClipResourcePath(int segmentIndex)
+        {
+            if (segmentIndex < 0 || segmentIndex >= MockDebateLeoClipNames.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(segmentIndex));
+            }
+
+            return MockDebateLeoClipResourceFolder + "/" + MockDebateLeoClipNames[segmentIndex];
+        }
 
         private CreeiStage CurrentCreeiStage => CreeiStages[Mathf.Clamp(_creeiStageIndex, 0, CreeiStages.Length - 1)];
 
@@ -358,6 +389,7 @@ namespace Game.Debate
                 if (_mockDebateLeoDurationSeconds >= mockDebateTargetSeconds)
                 {
                     _mockDebateLeoTimerRunning = false;
+                    StopLocalMockDebateLeoSpeech();
                     conversationNPC?.InterruptCharacterSpeech();
                     StartMockDebatePlayerTurn("Leo reached the three-minute limit. Your turn is ready.");
                 }
@@ -1044,6 +1076,7 @@ namespace Game.Debate
 
         private void ResetMockDebateState()
         {
+            StopLocalMockDebateLeoSpeech();
             _mockDebateRequestVersion++;
             if (_mockDebateRoutine != null)
             {
@@ -1126,14 +1159,140 @@ namespace Game.Debate
                 return;
             }
 
-            CreeiStage stage = (CreeiStage)Mathf.Clamp(_mockDebateLeoSegmentIndex, 0, CreeiStages.Length - 1);
-            string segment = _mockDebateLeoSpeechSegments[_mockDebateLeoSegmentIndex].Trim();
+            int segmentIndex = _mockDebateLeoSegmentIndex;
+            CreeiStage stage = (CreeiStage)Mathf.Clamp(segmentIndex, 0, CreeiStages.Length - 1);
+            string segment = _mockDebateLeoSpeechSegments[segmentIndex].Trim();
             _mockDebateLeoSegmentIndex++;
+
+            if (ConversationFlowSettings.DisableConvai)
+            {
+                if (!TryPlayPackagedMockDebateLeoSegment(segmentIndex, stage, segment))
+                {
+                    _mockDebateLeoTimerRunning = false;
+                    string resourcePath = GetMockDebateLeoClipResourcePath(segmentIndex);
+                    SetStatus(
+                        "Leo's packaged local audio is missing. Regenerate Scene 4 fixed audio in the Unity Tools/Debate menu.");
+                    UnityEngine.Debug.LogError(
+                        "Scene 04 local Leo speech could not load Resources/" + resourcePath +
+                        ".wav. Convai fallback is intentionally disabled.",
+                        this);
+                }
+
+                return;
+            }
+
             string prompt =
                 "You are Leo. Speak only in English. Read the prepared debate speech below aloud once. " +
                 "Do not answer the learner, add a new argument, ask a question, or discuss these instructions. " +
                 "Speak calmly at a clear debate pace. This is the " + stage + " part. Prepared text: [" + segment + "]";
             conversationNPC.SendTextDataAsync(prompt);
+        }
+
+        private bool TryPlayPackagedMockDebateLeoSegment(
+            int segmentIndex,
+            CreeiStage stage,
+            string segment)
+        {
+            string resourcePath = GetMockDebateLeoClipResourcePath(segmentIndex);
+            AudioClip clip = Resources.Load<AudioClip>(resourcePath);
+            if (clip == null)
+            {
+                return false;
+            }
+
+            StopLocalMockDebateLeoSpeech();
+            _mockDebateLeoLocalAudioSource = conversationNPC.GetComponent<AudioSource>();
+            if (_mockDebateLeoLocalAudioSource == null)
+            {
+                _mockDebateLeoLocalAudioSource = conversationNPC.gameObject.AddComponent<AudioSource>();
+            }
+
+            _mockDebateLeoLocalAudioSource.playOnAwake = false;
+            _mockDebateLeoLocalAudioSource.loop = false;
+
+            AudioDrivenNpcLipSync lipSync = conversationNPC.GetComponent<AudioDrivenNpcLipSync>();
+            if (lipSync == null)
+            {
+                lipSync = conversationNPC.gameObject.AddComponent<AudioDrivenNpcLipSync>();
+            }
+
+            lipSync.Configure(_mockDebateLeoLocalAudioSource);
+            lipSync.enabled = true;
+
+            if (_opponentTranscript.Length > 0)
+            {
+                _opponentTranscript.Append(' ');
+            }
+
+            _opponentTranscript.Append(segment);
+            SessionRecord.latestOpponentUtterance = _opponentTranscript.ToString();
+            ShowWorldCaption(
+                _opponentHeadCaptionRoot,
+                _opponentHeadCaptionText,
+                _opponentHeadCaptionScrollRect,
+                _opponentTranscript.ToString());
+
+            _mockDebateLeoHasStartedTalking = true;
+            SetStatus("Leo is presenting the " + stage + " part from packaged local audio...");
+            _mockDebateLeoLocalAudioSource.clip = clip;
+            _mockDebateLeoLocalAudioSource.Play();
+            _mockDebateLeoLocalSpeechRoutine = StartCoroutine(WaitForPackagedMockDebateLeoSegment(clip));
+            return true;
+        }
+
+        private IEnumerator WaitForPackagedMockDebateLeoSegment(AudioClip clip)
+        {
+            while (_mockDebateLeoLocalAudioSource != null &&
+                   _mockDebateLeoLocalAudioSource.clip == clip &&
+                   _mockDebateLeoLocalAudioSource.isPlaying)
+            {
+                yield return null;
+            }
+
+            if (_mockDebateLeoLocalAudioSource != null &&
+                _mockDebateLeoLocalAudioSource.clip == clip)
+            {
+                _mockDebateLeoLocalAudioSource.clip = null;
+            }
+
+            _mockDebateLeoLocalSpeechRoutine = null;
+            _mockDebateLeoHasStartedTalking = false;
+            if (!_mockDebateLeoTimerRunning ||
+                Phase != OrchestrationPhase.MockDebateOpponentSpeaking)
+            {
+                yield break;
+            }
+
+            _mockDebateLeoDurationSeconds = Mathf.Min(
+                mockDebateTargetSeconds,
+                Time.realtimeSinceStartup - _mockDebateLeoStartedAt);
+            UpdateMockDebateStageUi();
+            if (_mockDebateLeoSegmentIndex < _mockDebateLeoSpeechSegments.Length)
+            {
+                SendNextMockDebateLeoSegment();
+            }
+            else
+            {
+                _mockDebateLeoTimerRunning = false;
+                StartMockDebatePlayerTurn("Leo finished his CREEI argument. Your turn is ready.");
+            }
+        }
+
+        private void StopLocalMockDebateLeoSpeech()
+        {
+            if (_mockDebateLeoLocalSpeechRoutine != null)
+            {
+                StopCoroutine(_mockDebateLeoLocalSpeechRoutine);
+                _mockDebateLeoLocalSpeechRoutine = null;
+            }
+
+            if (_mockDebateLeoLocalAudioSource != null)
+            {
+                _mockDebateLeoLocalAudioSource.Stop();
+                _mockDebateLeoLocalAudioSource.clip = null;
+            }
+
+            _mockDebateLeoHasStartedTalking = false;
         }
 
         private void StartMockDebatePlayerTurn(string transitionMessage)
@@ -1863,6 +2022,7 @@ namespace Game.Debate
 
         private void CancelExperimentActivity()
         {
+            StopLocalMockDebateLeoSpeech();
             if (episodeController != null && episodeController.HasOpenOpportunity)
             {
                 episodeController.Complete(
@@ -3256,6 +3416,12 @@ namespace Game.Debate
 
         private void CaptureOpponentAudio(ConvaiNPCAudioManager.ResponseAudio response)
         {
+            if (Phase == OrchestrationPhase.MockDebateOpponentSpeaking &&
+                ConversationFlowSettings.DisableConvai)
+            {
+                return;
+            }
+
             if (response == null || response.IsFinal || string.IsNullOrWhiteSpace(response.AudioTranscript))
             {
                 return;
@@ -3279,6 +3445,11 @@ namespace Game.Debate
         {
             if (Phase == OrchestrationPhase.MockDebateOpponentSpeaking)
             {
+                if (ConversationFlowSettings.DisableConvai)
+                {
+                    return;
+                }
+
                 if (isTalking)
                 {
                     _mockDebateLeoHasStartedTalking = true;

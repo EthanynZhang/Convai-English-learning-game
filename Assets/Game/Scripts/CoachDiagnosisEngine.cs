@@ -167,6 +167,45 @@ namespace Game.Debate
             };
         }
 
+        public JObject BuildRequestJson(CoachDiagnosisRequest request)
+        {
+            JObject body = new()
+            {
+                ["model"] = _model,
+                ["temperature"] = 0,
+                ["messages"] = new JArray
+                {
+                    new JObject
+                    {
+                        ["role"] = "system",
+                        ["content"] = "Return only strict JSON matching every field requested by the user."
+                    },
+                    new JObject { ["role"] = "user", ["content"] = BuildPrompt(request) }
+                }
+            };
+
+            if (_model.StartsWith("deepseek-", StringComparison.OrdinalIgnoreCase))
+            {
+                body["response_format"] = new JObject { ["type"] = "json_object" };
+                body["thinking"] = new JObject { ["type"] = "disabled" };
+            }
+            else
+            {
+                body["response_format"] = new JObject
+                {
+                    ["type"] = "json_schema",
+                    ["json_schema"] = new JObject
+                    {
+                        ["name"] = "coach_diagnosis",
+                        ["strict"] = true,
+                        ["schema"] = BuildStructuredOutputSchema()
+                    }
+                };
+            }
+
+            return body;
+        }
+
         public IEnumerator Diagnose(CoachDiagnosisRequest request, Action<CoachDiagnosisResult> onComplete)
         {
             int requestVersion = ++_requestVersion;
@@ -211,25 +250,7 @@ namespace Game.Debate
         {
             string endpoint = DebateCommandParser.ResolveChatCompletionsEndpoint(
                 DebateCommandParser.ResolveBaseUrl(_baseUrl));
-            JObject body = new()
-            {
-                ["model"] = _model,
-                ["temperature"] = 0,
-                ["messages"] = new JArray
-                {
-                    new JObject { ["role"] = "user", ["content"] = BuildPrompt(request) }
-                },
-                ["response_format"] = new JObject
-                {
-                    ["type"] = "json_schema",
-                    ["json_schema"] = new JObject
-                    {
-                        ["name"] = "coach_diagnosis",
-                        ["strict"] = true,
-                        ["schema"] = BuildStructuredOutputSchema()
-                    }
-                }
-            };
+            JObject body = BuildRequestJson(request);
 
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(body.ToString(Formatting.None));
             using UnityWebRequest webRequest = new(endpoint, UnityWebRequest.kHttpVerbPOST)
@@ -246,8 +267,12 @@ namespace Game.Debate
 
             if (webRequest.result != UnityWebRequest.Result.Success)
             {
+                string responseBody = webRequest.downloadHandler?.text?.Trim();
+                string responseDetails = string.IsNullOrWhiteSpace(responseBody)
+                    ? string.Empty
+                    : " Response: " + responseBody;
                 onComplete?.Invoke(Failure(
-                    $"Diagnosis request failed ({webRequest.responseCode}): {webRequest.error}"));
+                    $"Diagnosis request failed ({webRequest.responseCode}): {webRequest.error}.{responseDetails}"));
                 yield break;
             }
 

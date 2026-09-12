@@ -8,6 +8,7 @@ using Convai.Scripts.Runtime.Features;
 using Convai.Scripts.Runtime.LoggerSystem;
 using Convai.Scripts.Runtime.PlayerStats;
 using Convai.Scripts.Runtime.UI;
+using Game.Debate;
 using Grpc.Core;
 using Service;
 using TMPro;
@@ -160,24 +161,32 @@ namespace Convai.Scripts.Runtime.Core
                 // Request microphone permission from the user
                 Permission.RequestUserPermission(Permission.Microphone);
 #endif
-            // DO NOT EDIT
-            // gRPC setup configuration 
+            if (ConvaiNetworkPolicy.RequestsAllowed)
+            {
+                EnsureGrpcClientInitialized();
+                if (initializeSessionID && _client != null)
+                    sessionID = await ConvaiGRPCAPI.InitializeSessionIDAsync(characterName, _client, characterID, sessionID);
+            }
+            _convaiChatUIHandler = ConvaiChatUIHandler.Instance;
+        }
 
-            #region GRPC_SETUP
+        private bool EnsureGrpcClientInitialized()
+        {
+            if (!ConvaiNetworkPolicy.RequestsAllowed)
+                return false;
 
-            SslCredentials credentials = new(); // Create SSL credentials for secure communication
+            if (_client != null)
+                return true;
+
+            SslCredentials credentials = new();
             List<ChannelOption> options = new()
             {
                 new ChannelOption(ChannelOptions.MaxReceiveMessageLength, 16 * 1024 * 1024),
                 new ChannelOption("grpc.enable_http_proxy", 0)
             };
-            _channel = new Channel(GRPC_API_ENDPOINT, credentials, options); // Initialize a gRPC channel with the specified endpoint and credentials
-            _client = new ConvaiService.ConvaiServiceClient(_channel); // Initialize the gRPC client for the ConvaiService using the channel
-
-            #endregion
-
-            if (initializeSessionID) sessionID = await ConvaiGRPCAPI.InitializeSessionIDAsync(characterName, _client, characterID, sessionID);
-            _convaiChatUIHandler = ConvaiChatUIHandler.Instance;
+            _channel = new Channel(GRPC_API_ENDPOINT, credentials, options);
+            _client = new ConvaiService.ConvaiServiceClient(_channel);
+            return true;
         }
 
         private void OnEnable()
@@ -226,6 +235,9 @@ namespace Convai.Scripts.Runtime.Core
 
         public async void TriggerEvent(string triggerName)
         {
+            if (!EnsureGrpcClientInitialized() || ConvaiGRPCAPI.Instance == null)
+                return;
+
             string triggerMessage = "";
             TriggerConfig trigger = new()
             {
@@ -242,6 +254,9 @@ namespace Convai.Scripts.Runtime.Core
 
         public async void TriggerSpeech(string triggerMessage)
         {
+            if (!EnsureGrpcClientInitialized() || ConvaiGRPCAPI.Instance == null)
+                return;
+
             string triggerName = "";
             TriggerConfig trigger = new()
             {
@@ -343,6 +358,9 @@ namespace Convai.Scripts.Runtime.Core
         /// <param name="text">The message to send.</param>
         public async void SendTextDataAsync(string text)
         {
+            if (!EnsureGrpcClientInitialized() || ConvaiGRPCAPI.Instance == null)
+                return;
+
             try
             {
                 await ConvaiGRPCAPI.Instance.SendTextData(_client, text, characterID,
@@ -371,6 +389,9 @@ namespace Convai.Scripts.Runtime.Core
 
         private async Task StartListeningInternal(int recordingLengthSeconds)
         {
+            if (!EnsureGrpcClientInitialized() || _grpcAPI == null)
+                return;
+
             if (!MicrophoneManager.Instance.HasAnyMicrophoneDevices())
             {
                 NotificationSystemHandler.Instance.NotificationRequest(NotificationType.NoMicrophoneDetected);
@@ -586,6 +607,7 @@ namespace Convai.Scripts.Runtime.Core
 
         public ConvaiService.ConvaiServiceClient GetClient()
         {
+            EnsureGrpcClientInitialized();
             return _client;
         }
 

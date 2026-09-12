@@ -1,5 +1,12 @@
 {
   "dependencies": {
+    "com.cysharp.unitask": {
+      "version": "2.5.10",
+      "depth": 1,
+      "source": "registry",
+      "dependencies": {},
+      "url": "https://package.openupm.com"
+    },
     "com.gamebooom.unity.mcp": {
       "version": "https://github.com/FunplayAI/funplay-unity-mcp.git#v0.5.2",
       "depth": 0,
@@ -9,6 +16,16 @@
         "com.unity.inputsystem": "1.7.0"
       },
       "hash": "fa2b29f280e409596411e5b28b158f8d8795446d"
+    },
+    "com.ponyudev.sherpa-onnx": {
+      "version": "0.2.0",
+      "depth": 0,
+      "source": "registry",
+      "dependencies": {
+        "com.cysharp.unitask": "2.5.10",
+        "com.unity.sharp-zip-lib": "1.4.1"
+      },
+      "url": "https://package.openupm.com"
     },
     "com.unity.2d.sprite": {
       "version": "1.0.0",
@@ -210,6 +227,13 @@
         "com.unity.render-pipelines.core": "17.4.0",
         "com.unity.searcher": "4.9.3"
       }
+    },
+    "com.unity.sharp-zip-lib": {
+      "version": "1.4.1",
+      "depth": 1,
+      "source": "registry",
+      "dependencies": {},
+      "url": "https://packages.unity.com"
     },
     "com.unity.test-framework": {
       "version": "1.6.0",

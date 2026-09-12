@@ -159,24 +159,42 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void DialogueDemoRoutesBothSpeakersThroughMiniMaxAndSharedLipSync()
+        public void DialogueDemoPrefersPackagedWavsAndSharedLipSync()
         {
             string controllerSource = File.ReadAllText(Path.Combine(
                 "Assets", "Game", "Scripts", "NpcDebateLearningPhaseController.cs"));
             string clientSource = File.ReadAllText(Path.Combine(
                 "Assets", "Game", "Scripts", "MiniMaxTtsClient.cs"));
 
-            StringAssert.Contains("PlayMiniMaxDialogueLine", controllerSource);
+            StringAssert.Contains("PlayCachedDialogueLine", controllerSource);
+            StringAssert.Contains("TryPlayCachedDemoTts", controllerSource);
             StringAssert.Contains("GetMiniMaxVoiceId(line)", controllerSource);
             StringAssert.Contains("MiniMaxTtsClient.MaleVoiceId", controllerSource);
             StringAssert.Contains("MiniMaxTtsClient.FemaleVoiceId", controllerSource);
-            StringAssert.DoesNotContain(
-                "voiceSeconds = PlayDialogueLine(CurrentStage.Key, i, line, speaker);",
-                controllerSource);
+            StringAssert.Contains("RequestSceneOneTtsClip", controllerSource);
+            StringAssert.Contains("RequestLocalClip", controllerSource);
+            StringAssert.DoesNotContain("speaker.SendTextDataAsync", controllerSource);
             StringAssert.Contains("EnsureAudioLipSync(primaryDemoNPC);", controllerSource);
             StringAssert.Contains("EnsureAudioLipSync(secondaryDemoNPC);", controllerSource);
             StringAssert.Contains("EnsureAudioLipSync(speaker);", controllerSource);
             StringAssert.Contains("EnvironmentVariableTarget.User", clientSource);
+        }
+
+        [Test]
+        public void SceneOnePlayerBuildUsesPackagedCacheWithoutNetworkFallback()
+        {
+            string controllerSource = File.ReadAllText(Path.Combine(
+                "Assets", "Game", "Scripts", "NpcDebateLearningPhaseController.cs"));
+            string clientSource = File.ReadAllText(Path.Combine(
+                "Assets", "Game", "Scripts", "MiniMaxTtsClient.cs"));
+
+            StringAssert.Contains("Application.isEditor", controllerSource);
+            StringAssert.Contains("_miniMaxTtsClient.RequestClip", controllerSource);
+            StringAssert.Contains("_miniMaxTtsClient.RequestLocalClip", controllerSource);
+            StringAssert.DoesNotContain("speaker.SendTextDataAsync", controllerSource);
+            StringAssert.Contains("bool allowNetwork", clientSource);
+            StringAssert.Contains("if (!allowNetwork)", clientSource);
+            StringAssert.Contains("Application.streamingAssetsPath", clientSource);
         }
 
         [Test]
@@ -255,13 +273,14 @@ namespace Game.Tests.EditMode
         }
 
         [Test]
-        public void DialogueUsesTheSameMiniMaxPipelineAsStageNarration()
+        public void DialogueUsesTheSamePackagedCachePipelineAsStageNarration()
         {
             string source = File.ReadAllText(Path.Combine(
                 "Assets", "Game", "Scripts", "NpcDebateLearningPhaseController.cs"));
 
-            StringAssert.Contains("PlayMiniMaxDialogueLine", source);
-            StringAssert.Contains("_miniMaxTtsClient.RequestClip", source);
+            StringAssert.Contains("PlayCachedDialogueLine", source);
+            StringAssert.Contains("RequestSceneOneTtsClip", source);
+            StringAssert.Contains("_miniMaxTtsClient.RequestLocalClip", source);
             StringAssert.Contains("line.Text", source);
             StringAssert.Contains("PlayAudioClipOnNpc(generatedClip, speaker, true)", source);
         }

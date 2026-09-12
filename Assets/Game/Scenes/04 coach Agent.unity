@@ -5950,9 +5950,9 @@ MonoBehaviour:
   episodeController: {fileID: 8800100007}
   coachFixedWorldPosition: {x: 0.8, y: 0, z: 2.33}
   opponentFixedWorldPosition: {x: -0.25, y: 0, z: 2.5}
-  openAIModel: gpt-4o-mini
+  openAIModel: deepseek-flash
   responseTimeoutSeconds: 30
-  openAIBaseUrl: https://api.meding.site/v1/chat/completions
+  openAIBaseUrl: https://api.deepseek.com/chat/completions
   openAIApiKeyOverride: 
   speakCoachFeedback: 1
   speakOpponentChallenges: 0

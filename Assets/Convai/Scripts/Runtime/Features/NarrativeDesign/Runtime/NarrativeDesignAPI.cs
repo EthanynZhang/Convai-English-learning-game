@@ -6,6 +6,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Threading.Tasks;
 using Convai.Scripts.Runtime.LoggerSystem;
+using Game.Debate;
 using Newtonsoft.Json;
 
 namespace Convai.Scripts.Runtime.Features
@@ -135,6 +136,9 @@ namespace Convai.Scripts.Runtime.Features
 
         private async Task<string> SendPostRequestAsync(string endpoint, HttpContent content)
         {
+            if (!ConvaiNetworkPolicy.RequestsAllowed)
+                return null;
+
             try
             {
                 HttpResponseMessage response = await _httpClient.PostAsync(BASE_URL + endpoint, content);

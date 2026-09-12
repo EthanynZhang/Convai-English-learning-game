@@ -31,7 +31,10 @@ namespace Game.Debate
         private readonly Dictionary<string, Button> _sceneButtons = new();
         private readonly Dictionary<string, Text> _sceneButtonLabels = new();
         private GameObject _canvasRoot;
+        private Button _conversationFlowButton;
+        private Text _conversationFlowButtonLabel;
         private bool _isVisible;
+        private float _lastConversationToggleTime = -10f;
         private CursorLockMode _previousCursorLockMode;
         private bool _previousCursorVisible;
         private Font _font;
@@ -50,6 +53,7 @@ namespace Game.Debate
 
         private void Awake()
         {
+            ConversationFlowSettings.DisableConvaiChanged += HandleConversationFlowChanged;
             EnsureUi();
             _canvasRoot.SetActive(false);
         }
@@ -73,6 +77,7 @@ namespace Game.Debate
 
         private void OnDestroy()
         {
+            ConversationFlowSettings.DisableConvaiChanged -= HandleConversationFlowChanged;
             if (_isVisible) RestoreCursor();
         }
 
@@ -113,13 +118,13 @@ namespace Game.Debate
             RectTransform panelRect = panel.rectTransform;
             panelRect.anchorMin = panelRect.anchorMax = new Vector2(0.5f, 0.5f);
             panelRect.pivot = new Vector2(0.5f, 0.5f);
-            panelRect.sizeDelta = new Vector2(720f, 700f);
+            panelRect.sizeDelta = new Vector2(720f, 820f);
             panelRect.anchoredPosition = Vector2.zero;
 
             CreateText(panel.transform, "Title", "STUDY SCENE MENU", 34,
-                FontStyle.Bold, new Vector2(0f, 272f), new Vector2(650f, 55f));
+                FontStyle.Bold, new Vector2(0f, 350f), new Vector2(650f, 55f));
             CreateText(panel.transform, "Subtitle", "Press F5 or Esc to close this menu", 18,
-                FontStyle.Normal, new Vector2(0f, 225f), new Vector2(650f, 36f),
+                FontStyle.Normal, new Vector2(0f, 305f), new Vector2(650f, 36f),
                 new Color(0.8f, 0.84f, 0.9f));
 
             for (int index = 0; index < TargetSceneNames.Length; index++)
@@ -131,7 +136,7 @@ namespace Game.Debate
                     panel.transform,
                     "Load " + sceneName,
                     label,
-                    new Vector2(0f, 154f - index * 78f),
+                    new Vector2(0f, 225f - index * 78f),
                     new Vector2(620f, 62f),
                     new Color(0.12f, 0.19f, 0.27f, 1f));
                 button.onClick.AddListener(() => LoadDebugScene(capturedSceneName));
@@ -139,17 +144,29 @@ namespace Game.Debate
                 _sceneButtonLabels[sceneName] = button.GetComponentInChildren<Text>(true);
             }
 
+            _conversationFlowButton = CreateButton(
+                panel.transform,
+                "Toggle Convai Flow",
+                string.Empty,
+                new Vector2(0f, -105f),
+                new Vector2(620f, 62f),
+                new Color(0.06f, 0.3f, 0.24f, 1f));
+            _conversationFlowButton.onClick.AddListener(ToggleConversationFlow);
+            _conversationFlowButtonLabel =
+                _conversationFlowButton.GetComponentInChildren<Text>(true);
+            RefreshConversationFlowButton();
+
             Button exitButton = CreateButton(
                 panel.transform,
                 "Exit Application",
                 "Exit Application",
-                new Vector2(0f, -178f),
+                new Vector2(0f, -185f),
                 new Vector2(620f, 62f),
                 new Color(0.45f, 0.08f, 0.08f, 1f));
             exitButton.onClick.AddListener(ExitApplication);
             CreateText(panel.transform, "Footer",
-                "Choose a study scene or exit the application.", 17,
-                FontStyle.Normal, new Vector2(0f, -265f), new Vector2(650f, 40f),
+                "The conversation mode is shared by every scene.", 17,
+                FontStyle.Normal, new Vector2(0f, -275f), new Vector2(650f, 40f),
                 new Color(0.8f, 0.84f, 0.9f));
         }
 
@@ -168,6 +185,47 @@ namespace Game.Debate
                         ? string.Empty
                         : "  (NOT IN BUILD)";
                 _sceneButtonLabels[sceneName].text = TargetSceneLabels[index] + suffix;
+            }
+
+            RefreshConversationFlowButton();
+        }
+
+        private void ToggleConversationFlow()
+        {
+            if (Time.unscaledTime - _lastConversationToggleTime < 0.25f)
+            {
+                return;
+            }
+
+            _lastConversationToggleTime = Time.unscaledTime;
+            bool disableConvai = ConversationFlowSettings.Toggle();
+            Debug.Log(disableConvai
+                ? "[StudySceneMenu] Convai disabled globally; using local conversation flow."
+                : "[StudySceneMenu] Convai enabled globally; using original Convai flow.");
+        }
+
+        private void HandleConversationFlowChanged(bool disableConvai)
+        {
+            RefreshConversationFlowButton();
+        }
+
+        private void RefreshConversationFlowButton()
+        {
+            if (_conversationFlowButton == null || _conversationFlowButtonLabel == null)
+            {
+                return;
+            }
+
+            bool disableConvai = ConversationFlowSettings.DisableConvai;
+            _conversationFlowButtonLabel.text = disableConvai
+                ? "Convai: OFF  |  DeepSeek + local Kokoro  (click to enable)"
+                : "Convai: ON  |  Original Convai flow  (click to disable)";
+            Image image = _conversationFlowButton.targetGraphic as Image;
+            if (image != null)
+            {
+                image.color = disableConvai
+                    ? new Color(0.06f, 0.3f, 0.24f, 1f)
+                    : new Color(0.48f, 0.18f, 0.06f, 1f);
             }
         }
 

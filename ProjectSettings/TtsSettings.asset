@@ -1,0 +1,96 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &1
+MonoBehaviour:
+  m_ObjectHideFlags: 53
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5044a7f05f5494d8c8087bb8d18e0dd4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: PonyuDev.SherpaOnnx.Editor::PonyuDev.SherpaOnnx.Editor.TtsInstall.Settings.TtsProjectSettings
+  ttsEnabled: 1
+  data:
+    activeProfileIndex: 0
+    keepOnlyActiveProfile: 1
+    buildOnlyActiveProfile: 1
+    cache:
+      offlineTtsEnabled: 1
+      offlineTtsPoolSize: 1
+      resultCacheEnabled: 1
+      resultCacheSize: 8
+      audioClipEnabled: 1
+      audioClipPoolSize: 2
+      audioSourceEnabled: 0
+      audioSourcePoolSize: 1
+    profiles:
+    - profileName: kokoro-en-v0_19
+      modelType: 2
+      modelSource: 0
+      sourceUrl: https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2
+      numThreads: 2
+      provider: cpu
+      allowInt8: 0
+      speakerId: 0
+      speed: 1
+      ruleFsts: 
+      ruleFars: 
+      maxNumSentences: 1
+      silenceScale: 0.2
+      vitsModel: 
+      vitsLexicon: 
+      vitsTokens: 
+      vitsDataDir: 
+      vitsDictDir: 
+      vitsNoiseScale: 0.667
+      vitsNoiseScaleW: 0.8
+      vitsLengthScale: 1
+      matchaAcousticModel: 
+      matchaVocoder: 
+      matchaLexicon: 
+      matchaTokens: 
+      matchaDataDir: 
+      matchaDictDir: 
+      matchaNoiseScale: 0.667
+      matchaLengthScale: 1
+      kokoroModel: model.onnx
+      kokoroVoices: voices.bin
+      kokoroTokens: tokens.txt
+      kokoroDataDir: espeak-ng-data
+      kokoroDictDir: 
+      kokoroLexicon: 
+      kokoroLang: 
+      kokoroLengthScale: 1
+      kittenModel: 
+      kittenVoices: 
+      kittenTokens: 
+      kittenDataDir: 
+      kittenLengthScale: 1
+      zipVoiceTokens: 
+      zipVoiceEncoder: 
+      zipVoiceDecoder: 
+      zipVoiceVocoder: 
+      zipVoiceDataDir: 
+      zipVoiceLexicon: 
+      zipVoiceFeatScale: 0.1
+      zipVoiceTshift: 0.5
+      zipVoiceTargetRms: 0.1
+      zipVoiceGuidanceScale: 1
+      pocketLmFlow: 
+      pocketLmMain: 
+      pocketEncoder: 
+      pocketDecoder: 
+      pocketTextConditioner: 
+      pocketVocabJson: 
+      pocketTokenScoresJson: 
+      supertonicDurationPredictor: 
+      supertonicTextEncoder: 
+      supertonicVectorEstimator: 
+      supertonicVocoder: 
+      supertonicTtsJson: 
+      supertonicUnicodeIndexer: 
+      supertonicVoiceStyle: 
+      remoteBaseUrl: 

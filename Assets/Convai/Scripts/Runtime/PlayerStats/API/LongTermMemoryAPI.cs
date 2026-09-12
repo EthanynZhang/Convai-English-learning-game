@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Assets.Convai.Scripts.Runtime.PlayerStats.API.Model;
 using Convai.Scripts.Runtime.LoggerSystem;
 using Convai.Scripts.Runtime.PlayerStats.API.Model;
+using Game.Debate;
 using Newtonsoft.Json;
 
 namespace Convai.Scripts.Runtime.PlayerStats.API {
@@ -197,6 +198,9 @@ namespace Convai.Scripts.Runtime.PlayerStats.API {
         }
 
         private static async Task<string> SendPostRequestAsync ( string endpoint, HttpClient httpClient, HttpContent content ) {
+            if ( !ConvaiNetworkPolicy.RequestsAllowed )
+                return null;
+
             try {
                 HttpResponseMessage response = await httpClient.PostAsync( endpoint, content );
                 response.EnsureSuccessStatusCode();

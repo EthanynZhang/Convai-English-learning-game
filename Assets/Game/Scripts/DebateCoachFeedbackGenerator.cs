@@ -12,7 +12,7 @@ namespace Game.Debate
 {
     public sealed class DebateCoachFeedbackGenerator
     {
-        private const string DefaultModel = "gpt-4o-mini";
+        private const string DefaultModel = "deepseek-flash";
 
         private readonly string _model;
         private readonly int _timeoutSeconds;
@@ -693,7 +693,7 @@ namespace Game.Debate
             CoachFeedbackRequest safeRequest = request ?? new CoachFeedbackRequest();
             bool creeiModelAnswer =
                 safeRequest.Purpose == CoachFeedbackPurpose.CreeiModelAnswer;
-            return new JObject
+            JObject requestJson = new()
             {
                 ["model"] = _model,
                 ["temperature"] = 0.2f,
@@ -722,6 +722,16 @@ namespace Game.Debate
                     ["type"] = "json_object"
                 }
             };
+
+            if (_model.StartsWith("deepseek-", StringComparison.OrdinalIgnoreCase))
+            {
+                requestJson["thinking"] = new JObject
+                {
+                    ["type"] = "disabled"
+                };
+            }
+
+            return requestJson;
         }
 
         public static CoachFeedbackResult BuildLocalFallback(CoachFeedbackRequest request)

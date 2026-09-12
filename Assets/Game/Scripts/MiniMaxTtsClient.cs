@@ -16,6 +16,7 @@ namespace Game.Debate
         public const string FemaleVoiceId = "English_Graceful_Lady";
         public const string MaleVoiceId = "English_Gentle-voiced_man";
         public const string VoiceId = FemaleVoiceId;
+        public const string CacheDirectoryName = "minimax_tts_cache";
         // Never commit a live credential. Local and CI builds inject this through the environment.
         private const string EmbeddedInternalTestApiKey = "";
 
@@ -31,13 +32,14 @@ namespace Game.Debate
             Action<AudioClip> onSuccess,
             Action<string> onFailure)
         {
-            yield return RequestClip(
+            yield return RequestClipInternal(
                 text,
                 FemaleVoiceId,
                 generation,
                 isGenerationCurrent,
                 onSuccess,
-                onFailure);
+                onFailure,
+                true);
         }
 
         public IEnumerator RequestClip(
@@ -47,6 +49,60 @@ namespace Game.Debate
             Func<int, bool> isGenerationCurrent,
             Action<AudioClip> onSuccess,
             Action<string> onFailure)
+        {
+            yield return RequestClipInternal(
+                text,
+                voiceId,
+                generation,
+                isGenerationCurrent,
+                onSuccess,
+                onFailure,
+                true);
+        }
+
+        public IEnumerator RequestLocalClip(
+            string text,
+            int generation,
+            Func<int, bool> isGenerationCurrent,
+            Action<AudioClip> onSuccess,
+            Action<string> onFailure)
+        {
+            yield return RequestClipInternal(
+                text,
+                FemaleVoiceId,
+                generation,
+                isGenerationCurrent,
+                onSuccess,
+                onFailure,
+                false);
+        }
+
+        public IEnumerator RequestLocalClip(
+            string text,
+            string voiceId,
+            int generation,
+            Func<int, bool> isGenerationCurrent,
+            Action<AudioClip> onSuccess,
+            Action<string> onFailure)
+        {
+            yield return RequestClipInternal(
+                text,
+                voiceId,
+                generation,
+                isGenerationCurrent,
+                onSuccess,
+                onFailure,
+                false);
+        }
+
+        private IEnumerator RequestClipInternal(
+            string text,
+            string voiceId,
+            int generation,
+            Func<int, bool> isGenerationCurrent,
+            Action<AudioClip> onSuccess,
+            Action<string> onFailure,
+            bool allowNetwork)
         {
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -58,16 +114,68 @@ namespace Game.Debate
             string cachePath = GetCachePath(text, resolvedVoiceId);
             if (File.Exists(cachePath))
             {
-                yield return LoadCachedClip(cachePath, generation, isGenerationCurrent, onSuccess, null);
+                bool loaded = false;
+                yield return LoadCachedClip(
+                    cachePath,
+                    generation,
+                    isGenerationCurrent,
+                    clip =>
+                    {
+                        loaded = true;
+                        onSuccess?.Invoke(clip);
+                    },
+                    null,
+                    true);
                 if (!IsCurrent(generation, isGenerationCurrent))
                 {
                     yield break;
                 }
 
-                if (File.Exists(cachePath))
+                if (loaded)
                 {
                     yield break;
                 }
+            }
+
+            string packagedCachePath = GetPackagedCachePath(text, resolvedVoiceId);
+            if (File.Exists(packagedCachePath))
+            {
+                bool loaded = false;
+                string packagedCacheError = string.Empty;
+                yield return LoadCachedClip(
+                    packagedCachePath,
+                    generation,
+                    isGenerationCurrent,
+                    clip =>
+                    {
+                        loaded = true;
+                        onSuccess?.Invoke(clip);
+                    },
+                    error => packagedCacheError = error,
+                    false);
+                if (!IsCurrent(generation, isGenerationCurrent))
+                {
+                    yield break;
+                }
+
+                if (loaded)
+                {
+                    yield break;
+                }
+
+                if (!allowNetwork)
+                {
+                    onFailure?.Invoke(packagedCacheError);
+                    yield break;
+                }
+            }
+
+            if (!allowNetwork)
+            {
+                onFailure?.Invoke(
+                    $"Packaged MiniMax TTS WAV is missing: {Path.GetFileName(packagedCachePath)}. " +
+                    $"Pack the developer cache into StreamingAssets/{CacheDirectoryName} before building.");
+                yield break;
             }
 
             string apiKey = ResolveApiKey();
@@ -113,7 +221,7 @@ namespace Game.Debate
 
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(cachePath) ?? GetCacheDirectory());
+                Directory.CreateDirectory(Path.GetDirectoryName(cachePath) ?? GetRuntimeCacheDirectory());
                 File.WriteAllBytes(cachePath, wavBytes);
             }
             catch (Exception exception)
@@ -122,7 +230,13 @@ namespace Game.Debate
                 yield break;
             }
 
-            yield return LoadCachedClip(cachePath, generation, isGenerationCurrent, onSuccess, onFailure);
+            yield return LoadCachedClip(
+                cachePath,
+                generation,
+                isGenerationCurrent,
+                onSuccess,
+                onFailure,
+                true);
         }
 
         public static string BuildRequestJson(string text)
@@ -228,7 +342,8 @@ namespace Game.Debate
             int generation,
             Func<int, bool> isGenerationCurrent,
             Action<AudioClip> onSuccess,
-            Action<string> onFailure)
+            Action<string> onFailure,
+            bool deleteInvalidFile)
         {
             string uri = new Uri(path).AbsoluteUri;
             using UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(uri, AudioType.WAV);
@@ -241,7 +356,11 @@ namespace Game.Debate
 
             if (request.result != UnityWebRequest.Result.Success)
             {
-                TryDeleteCacheFile(path);
+                if (deleteInvalidFile)
+                {
+                    TryDeleteCacheFile(path);
+                }
+
                 onFailure?.Invoke("MiniMax TTS cached WAV could not be loaded: " + request.error);
                 yield break;
             }
@@ -249,7 +368,11 @@ namespace Game.Debate
             AudioClip clip = DownloadHandlerAudioClip.GetContent(request);
             if (clip == null || clip.length <= 0f)
             {
-                TryDeleteCacheFile(path);
+                if (deleteInvalidFile)
+                {
+                    TryDeleteCacheFile(path);
+                }
+
                 onFailure?.Invoke("MiniMax TTS cached WAV was empty.");
                 yield break;
             }
@@ -260,12 +383,22 @@ namespace Game.Debate
 
         private string GetCachePath(string text, string voiceId)
         {
-            return Path.Combine(GetCacheDirectory(), ComputeCacheKey(text, voiceId) + ".wav");
+            return Path.Combine(GetRuntimeCacheDirectory(), ComputeCacheKey(text, voiceId) + ".wav");
         }
 
-        private static string GetCacheDirectory()
+        public static string GetPackagedCachePath(string text, string voiceId)
         {
-            return Path.Combine(Application.persistentDataPath, "minimax_tts_cache");
+            return Path.Combine(GetPackagedCacheDirectory(), ComputeCacheKey(text, voiceId) + ".wav");
+        }
+
+        public static string GetRuntimeCacheDirectory()
+        {
+            return Path.Combine(Application.persistentDataPath, CacheDirectoryName);
+        }
+
+        public static string GetPackagedCacheDirectory()
+        {
+            return Path.Combine(Application.streamingAssetsPath, CacheDirectoryName);
         }
 
         private static bool IsCurrent(int generation, Func<int, bool> isGenerationCurrent)

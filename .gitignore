@@ -132,7 +132,10 @@ Build1.rar
 # Asset Store packages kept local for license/safety.
 /[Aa]ssets/3D Book/
 /[Aa]ssets/3D Book.meta
-/[Aa]ssets/Plugins/
+/[Aa]ssets/Plugins/*
+!/[Aa]ssets/Plugins/SherpaOnnx/
+!/[Aa]ssets/Plugins/SherpaOnnx/**
+!/[Aa]ssets/Plugins/SherpaOnnx.meta
 /[Aa]ssets/Plugins.meta
 /[Aa]ssets/Editor Default Resources/
 /[Aa]ssets/Editor Default Resources.meta

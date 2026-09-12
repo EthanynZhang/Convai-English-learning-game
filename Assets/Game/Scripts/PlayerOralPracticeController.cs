@@ -10,8 +10,9 @@ using UnityEngine.InputSystem;
 namespace Game.Debate
 {
     /// <summary>
-    /// The Scene 03 oral-practice surface records only through iFlytek. Learner speech is never
-    /// sent to a Convai NPC from this controller.
+    /// Scene 03 captures learner speech through iFlytek. When the local conversation flow is
+    /// enabled, confirmed transcripts are forwarded to DeepSeek by the scene conversation
+    /// controller; otherwise the original Convai talk input remains available.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class PlayerOralPracticeController : MonoBehaviour
@@ -23,6 +24,8 @@ namespace Game.Debate
         private GameObject _practiceRoot;
         private TMP_Text _countdownText;
         private TMP_Text _statusText;
+        private TMP_Text _instructionsText;
+        private TMP_Text _opponentReplyText;
         private Button _continueButton;
         private bool _eventsSubscribed;
         private bool _practiceActive;
@@ -42,9 +45,13 @@ namespace Game.Debate
         private bool _hasValidSavedAttempt;
         private bool _timeoutReached;
         private bool _finishWhenCurrentAttemptEnds;
+        private bool _useLocalOpponentFlow = true;
+        private bool _conversationInputBlocked;
 
         public float RemainingSeconds { get; private set; }
         public bool IsPracticeActive => _practiceActive;
+        public bool UsesLocalOpponentFlow => _useLocalOpponentFlow;
+        public event Action<string> TranscriptConfirmed;
 
         private void Awake()
         {
@@ -90,8 +97,11 @@ namespace Game.Debate
                 return;
             }
 
-            if (WasVoiceHotkeyPressed() &&
-                CanToggleRecordingFromKeyboard(_practiceActive, _voiceFinalizing))
+            if (_useLocalOpponentFlow &&
+                WasVoiceHotkeyPressed() &&
+                CanToggleRecordingFromKeyboard(
+                    _practiceActive,
+                    _voiceFinalizing || _conversationInputBlocked))
             {
                 ToggleVoiceRecording();
             }
@@ -125,9 +135,9 @@ namespace Game.Debate
             RemainingSeconds = _roundManager != null
                 ? Mathf.Max(0f, _roundManager.RoundDurationSeconds)
                 : DefaultPracticeDurationSeconds;
-            _roundManager?.SetPlayerPracticeInputSuppressed(true);
+            _roundManager?.SetPlayerPracticeInputSuppressed(_useLocalOpponentFlow);
             SetActive(_practiceRoot, true);
-            SetStatus("Press T to begin speaking.");
+            UpdateConversationModeText();
             UpdateCountdownText();
             ResearchCapture.RecordEvent("speech_task_started", "system", string.Empty, new
             {
@@ -138,7 +148,8 @@ namespace Game.Debate
 
         public void ToggleVoiceRecording()
         {
-            if (!_practiceActive || _realtimeTranscriber == null || _voiceFinalizing)
+            if (!_practiceActive || !_useLocalOpponentFlow || _realtimeTranscriber == null ||
+                _voiceFinalizing || _conversationInputBlocked)
             {
                 return;
             }
@@ -175,6 +186,58 @@ namespace Game.Debate
         public static bool CanToggleRecordingFromKeyboard(bool practiceActive, bool isFinalizing)
         {
             return practiceActive && !isFinalizing;
+        }
+
+        public void SetUseLocalOpponentFlow(bool enabled)
+        {
+            if (_useLocalOpponentFlow == enabled)
+            {
+                UpdateConversationModeText();
+                return;
+            }
+
+            _useLocalOpponentFlow = enabled;
+            _conversationInputBlocked = false;
+            if (!enabled && _realtimeTranscriber != null &&
+                (_voiceSessionActive || _voiceFinalizing ||
+                 _realtimeTranscriber.IsRecording || _realtimeTranscriber.IsConnecting))
+            {
+                string transcript = _realtimeTranscriber.CancelSessionAndGetLatestTranscript();
+                CommitTranscript(transcript);
+                _voiceSessionActive = false;
+                _voiceFinalizing = false;
+            }
+
+            if (_practiceActive)
+            {
+                _roundManager?.SetPlayerPracticeInputSuppressed(enabled);
+            }
+
+            UpdateConversationModeText();
+        }
+
+        public void SetConversationInputBlocked(bool blocked)
+        {
+            _conversationInputBlocked = blocked;
+        }
+
+        public void ShowConversationStatus(string message)
+        {
+            SetStatus(message);
+        }
+
+        public void ShowOpponentReply(string speakerName, string reply)
+        {
+            if (_opponentReplyText == null)
+            {
+                return;
+            }
+
+            string safeName = string.IsNullOrWhiteSpace(speakerName) ? "Opponent" : speakerName.Trim();
+            string safeReply = reply?.Trim() ?? string.Empty;
+            _opponentReplyText.text = string.IsNullOrWhiteSpace(safeReply)
+                ? string.Empty
+                : safeName + ": " + safeReply;
         }
 
         public static bool HasValidSavedAttempt(
@@ -473,13 +536,21 @@ namespace Game.Debate
             string confirmed = string.IsNullOrWhiteSpace(transcript) ? _latestTranscript : transcript;
             CommitTranscript(confirmed);
             _hasValidSavedAttempt |= CompleteResearchAttempt(confirmed, "transcription_completed");
+            if (_useLocalOpponentFlow && !string.IsNullOrWhiteSpace(confirmed))
+            {
+                TranscriptConfirmed?.Invoke(confirmed.Trim());
+            }
+
             if (_finishWhenCurrentAttemptEnds)
             {
                 _finishWhenCurrentAttemptEnds = false;
                 RequestPracticeCompletion();
                 return;
             }
-            ShowSavedAttemptActions();
+            if (!_conversationInputBlocked)
+            {
+                ShowSavedAttemptActions();
+            }
         }
 
         private void HandleTranscriptionFailed(string error)
@@ -653,13 +724,15 @@ namespace Game.Debate
             AddText(panel.transform, "Your 3-Minute Speaking Practice", 30, FontStyles.Bold, 46f);
             CreateTopicPanel(panel.transform, GetDebateTopic());
             _countdownText = AddText(panel.transform, string.Empty, 23, FontStyles.Bold, 32f);
-            AddText(
+            _instructionsText = AddText(
                 panel.transform,
-                "Speak in English about the debate topic. Press T to start recording, then press T again to stop. Your speech is transcribed by iFlytek and is not sent to any NPC.",
+                string.Empty,
                 18,
                 FontStyles.Normal,
                 66f);
             _statusText = AddText(panel.transform, string.Empty, 18, FontStyles.Bold, 34f);
+            _opponentReplyText = AddText(panel.transform, string.Empty, 18, FontStyles.Normal, 86f);
+            _opponentReplyText.color = new Color(0.55f, 0.88f, 1f);
             _continueButton = AddButton(
                 panel.transform,
                 "Continue to Scene 04  |  Coach Practice",
@@ -667,6 +740,7 @@ namespace Game.Debate
             _continueButton.gameObject.SetActive(false);
 
             _practiceRoot.SetActive(false);
+            UpdateConversationModeText();
         }
 
         private static GameObject CreatePanel(Transform parent)
@@ -768,6 +842,24 @@ namespace Game.Debate
         private void SetStatus(string value)
         {
             SetText(_statusText, value);
+        }
+
+        private void UpdateConversationModeText()
+        {
+            if (_instructionsText != null)
+            {
+                _instructionsText.text = _useLocalOpponentFlow
+                    ? "Debate in English with Berance. Press T to start recording and press T again to stop. iFlytek transcribes your speech; DeepSeek creates Berance's reply and local Kokoro speaks it."
+                    : "Convai mode is active. Hold T to talk to Berance using the original Convai conversation flow.";
+            }
+
+            if (_practiceActive && !_voiceSessionActive && !_voiceFinalizing &&
+                !_conversationInputBlocked)
+            {
+                SetStatus(_useLocalOpponentFlow
+                    ? "Press T to begin speaking."
+                    : "Convai mode is active. Hold T to speak with Berance.");
+            }
         }
 
         private static void SetActive(GameObject target, bool active)

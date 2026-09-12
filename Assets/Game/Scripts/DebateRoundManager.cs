@@ -67,6 +67,8 @@ namespace Game.Debate
         private bool _playerSpeechStarted;
         private bool _preparationInputSuppressed;
         private bool _playerPracticeInputSuppressed;
+        private bool _conversationFlowOverrideConfigured;
+        private bool _useLocalConversationFlow;
 
         public bool IsRoundRunning { get; private set; }
         public bool HasRoundEnded { get; private set; }
@@ -76,6 +78,11 @@ namespace Game.Debate
             _playerSpeechStarted);
         public float RoundDurationSeconds => roundDurationSeconds;
         public string DebateTopic => debateTopic?.Trim() ?? string.Empty;
+        public ConvaiNPC OpponentNPC => opponentNPC;
+        public bool UsesLocalConversationFlow =>
+            _conversationFlowOverrideConfigured && _useLocalConversationFlow;
+        public Func<string, Action<bool>, bool> LocalOpponentOpeningHandler { get; set; }
+        public Action CancelLocalOpponentOpeningHandler { get; set; }
         public event Action OpeningCompleted;
         public event Action PlayerPracticeReady;
 
@@ -105,6 +112,7 @@ namespace Game.Debate
         private void OnDisable()
         {
             _refereeSpeechGeneration++;
+            CancelLocalOpponentOpeningHandler?.Invoke();
             ClearOpponentConversationSuppression();
         }
 
@@ -156,11 +164,35 @@ namespace Game.Debate
 
             OpeningCompleted?.Invoke();
 
-            bool sendOpeningPrompt = ShouldSendOpponentOpeningPrompt(
-                    sendOpponentOpeningPrompt,
-                    opponentNPC != null,
-                    disableOpponentConversation);
-            if (sendOpeningPrompt)
+            bool wantsOpponentOpening = sendOpponentOpeningPrompt && opponentNPC != null;
+            if (wantsOpponentOpening && UsesLocalConversationFlow &&
+                LocalOpponentOpeningHandler != null)
+            {
+                yield return new WaitForSeconds(opponentOpeningDelaySeconds);
+                bool localOpeningCompleted = false;
+                bool localOpeningStarted = LocalOpponentOpeningHandler(
+                    FormatDebateText(opponentOpeningPrompt),
+                    _ => localOpeningCompleted = true);
+                if (localOpeningStarted && waitForOpponentOpeningBeforePlayerPractice)
+                {
+                    float elapsed = 0f;
+                    while (!localOpeningCompleted &&
+                           elapsed < Mathf.Max(1f, opponentOpeningTimeoutSeconds))
+                    {
+                        elapsed += Time.unscaledDeltaTime;
+                        yield return null;
+                    }
+
+                    if (!localOpeningCompleted)
+                    {
+                        CancelLocalOpponentOpeningHandler?.Invoke();
+                    }
+                }
+            }
+            else if (ShouldSendOpponentOpeningPrompt(
+                         sendOpponentOpeningPrompt,
+                         opponentNPC != null,
+                         IsOpponentConversationDisabled()))
             {
                 ConvaiNPCManager.Instance?.SetActiveConvaiNPC(opponentNPC);
                 yield return new WaitForSeconds(opponentOpeningDelaySeconds);
@@ -333,6 +365,31 @@ namespace Game.Debate
             _playerPracticeInputSuppressed = suppressed;
         }
 
+        public void SetUseLocalConversationFlow(bool useLocalFlow)
+        {
+            _conversationFlowOverrideConfigured = true;
+            _useLocalConversationFlow = useLocalFlow;
+
+            if (opponentNPC == null)
+            {
+                return;
+            }
+
+            if (useLocalFlow)
+            {
+                if (opponentNPC.IsCharacterTalking)
+                {
+                    opponentNPC.InterruptCharacterSpeech();
+                }
+
+                opponentNPC.isCharacterActive = false;
+                return;
+            }
+
+            opponentNPC.isCharacterActive = true;
+            ConvaiNPCManager.Instance?.SetActiveConvaiNPC(opponentNPC);
+        }
+
         private void ConfigureOpponentConversationSuppression()
         {
             ConvaiInputManager.ShouldSuppressTalkInput = ShouldSuppressOpponentConversation;
@@ -377,21 +434,21 @@ namespace Game.Debate
 
         private bool ShouldSuppressOpponentConversation()
         {
-            return disableOpponentConversation ||
+            return IsOpponentConversationDisabled() ||
                    _preparationInputSuppressed ||
                    _playerPracticeInputSuppressed;
         }
 
         private bool SuppressOpponentTextSubmission(string input)
         {
-            return disableOpponentConversation ||
+            return IsOpponentConversationDisabled() ||
                    _preparationInputSuppressed ||
                    _playerPracticeInputSuppressed;
         }
 
         private void DisableOpponentConversation()
         {
-            if (!disableOpponentConversation || opponentNPC == null)
+            if (!IsOpponentConversationDisabled() || opponentNPC == null)
             {
                 return;
             }
@@ -402,6 +459,13 @@ namespace Game.Debate
             }
 
             opponentNPC.isCharacterActive = false;
+        }
+
+        private bool IsOpponentConversationDisabled()
+        {
+            return _conversationFlowOverrideConfigured
+                ? _useLocalConversationFlow
+                : disableOpponentConversation;
         }
 
         private void SetStartButtonVisible(bool visible)

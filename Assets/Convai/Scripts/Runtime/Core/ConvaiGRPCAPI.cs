@@ -9,6 +9,7 @@ using Convai.Scripts.Runtime.LoggerSystem;
 using Convai.Scripts.Runtime.UI;
 using Convai.Scripts.Runtime.Utils;
 using Google.Protobuf;
+using Game.Debate;
 using Grpc.Core;
 using Service;
 using UnityEngine;
@@ -108,6 +109,9 @@ namespace Convai.Scripts.Runtime.Core
         /// </returns>
         public static async Task<string> InitializeSessionIDAsync(string characterName, ConvaiService.ConvaiServiceClient client, string characterID, string sessionID)
         {
+            if (!ConvaiNetworkPolicy.RequestsAllowed)
+                return sessionID;
+
             ConvaiLogger.DebugLog("Initializing SessionID for character: " + characterName, ConvaiLogger.LogCategory.Character);
             if (client == null)
             {
@@ -202,6 +206,9 @@ namespace Convai.Scripts.Runtime.Core
         public async Task SendTextData(ConvaiService.ConvaiServiceClient client, string userText, string characterID, bool isActionActive, bool isLipSyncActive,
             ActionConfig actionConfig, FaceModel faceModel, string speakerId, ConvaiNPC sendingNPC = null)
         {
+            if (!ConvaiNetworkPolicy.RequestsAllowed)
+                return;
+
             ConvaiLogger.DebugLog(
                 $"SendTextData started. CharacterId={SafeCharacterId(characterID)}, TextLength={(userText?.Length ?? 0)}",
                 ConvaiLogger.LogCategory.Character);
@@ -320,6 +327,9 @@ namespace Convai.Scripts.Runtime.Core
         public async Task StartRecordAudio(ConvaiService.ConvaiServiceClient client, bool isActionActive, bool isLipSyncActive, int recordingFrequency, int recordingLength,
             string characterID, ActionConfig actionConfig, FaceModel faceModel, string speakerID)
         {
+            if (!ConvaiNetworkPolicy.RequestsAllowed)
+                return;
+
             _currentVoiceTranscriptHandled = false;
             _suppressCurrentVoiceResponse = ShouldSuppressVoiceResponse?.Invoke() == true;
             _isFinalUserQueryTextBuffer = string.Empty;
@@ -1031,6 +1041,9 @@ namespace Convai.Scripts.Runtime.Core
         /// <param name="sendingNPC"></param>
         public async Task SendTriggerData(ConvaiService.ConvaiServiceClient client, string characterID, TriggerConfig triggerConfig, ConvaiNPC sendingNPC = null)
         {
+            if (!ConvaiNetworkPolicy.RequestsAllowed)
+                return;
+
             ConvaiLogger.DebugLog($"Sending trigger data: {triggerConfig.TriggerName}", ConvaiLogger.LogCategory.Character);
             AsyncDuplexStreamingCall<GetResponseRequest, GetResponseResponse> call = GetAsyncDuplexStreamingCallOptions(client);
 
@@ -1071,6 +1084,9 @@ namespace Convai.Scripts.Runtime.Core
         /// <returns>A Task representing the asynchronous operation.</returns>
         public async Task SendFeedback(bool thumbsUp, string interactionID, string feedbackText)
         {
+            if (!ConvaiNetworkPolicy.RequestsAllowed)
+                return;
+
             // Create a FeedbackRequest object with the provided parameters.
             FeedbackRequest request = new()
             {
